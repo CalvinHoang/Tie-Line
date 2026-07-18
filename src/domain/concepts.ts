@@ -2,7 +2,7 @@ export type ConceptCategory = "Critical points" | "Transformations" | "Diagram f
 
 export type ConceptDiagramKind =
   | "eutectic" | "peritectic" | "eutectoid" | "peritectoid" | "monotectic"
-  | "syntectic" | "spinodal" | "polymorph" | "compound" | "compound-incongruent"
+  | "syntectic" | "spinodal" | "polymorph" | "polymorph-super" | "compound" | "compound-incongruent"
   | "stability" | "solution" | "solution-maximum" | "solution-minimum" | "miscibility-gap"
   | "partial" | "secondary" | "liquid-immiscible" | "state-change" | "triple";
 
@@ -31,7 +31,7 @@ export const RULE_CONCEPTS: RuleConcept[] = [
   { id: "syntectic-point", title: "Syntectic point", category: "Critical points", diagram: "syntectic", reaction: "L₁ + L₂ → α", direction: "On cooling", transitionNote: "Two immiscible liquids are consumed; alpha forms.", rule: "Two liquids combine to form one solid phase on cooling.", cue: "A liquid miscibility gap closes onto a compound or solid field." },
 
   { id: "subsolidus-polymorphism", title: "Subsolidus polymorphism", category: "Transformations", diagram: "polymorph", reaction: "α ⇌ β", rule: "A crystal structure changes below every melting boundary.", cue: "An extra solid-state horizontal crosses beneath the eutectic or solidus." },
-  { id: "supersolidus-polymorphism", title: "Supersolidus polymorphism", category: "Transformations", diagram: "polymorph", reaction: "α ⇌ β", rule: "A polymorphic transition intersects or lies above part of the solidus.", cue: "The structural-change boundary reaches a liquid-containing field." },
+  { id: "supersolidus-polymorphism", title: "Supersolidus polymorphism", category: "Transformations", diagram: "polymorph-super", reaction: "α ⇌ β", rule: "A polymorphic transition intersects or lies above part of the solidus.", cue: "The structural-change boundary reaches a liquid-containing field." },
   { id: "superlattice", title: "Superlattice ordering", category: "Transformations", diagram: "miscibility-gap", reaction: "α ⇌ α′", rule: "An ordered superlattice forms from a disordered parent solid without changing the basic phase family.", cue: "A smaller ordering dome or boundary appears inside a solid solution." },
   { id: "congruent-melting", title: "Congruent melting", category: "Transformations", diagram: "compound", reaction: "γ ⇌ L", rule: "A compound melts to liquid of the same composition.", cue: "A vertical compound line reaches a liquidus maximum." },
   { id: "degenerate-eutectic", title: "Degenerate eutectic", category: "Transformations", diagram: "eutectic", reaction: "L → α + β", rule: "The eutectic composition coincides with, or lies extremely close to, an end member or compound.", cue: "The invariant point is pushed against a limiting composition." },

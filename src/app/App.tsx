@@ -136,10 +136,10 @@ function ConceptGrid({ concepts, onSelect }: { concepts: RuleConcept[]; onSelect
 function FoundationSketch({ kind }: { kind: typeof FOUNDATIONS[number]["sketch"] }) {
   if (kind === "triangle") return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M24 73 80 14l56 59Z"/><circle cx="24" cy="73" r="3"/><circle cx="80" cy="14" r="3"/><circle cx="136" cy="73" r="3"/><circle className="accent-fill" cx="80" cy="52" r="4"/><path className="accent" d="M80 52 24 73M80 52 80 14M80 52l56 21"/></svg>;
   if (kind === "lever") return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M22 45h116"/><circle cx="42" cy="45" r="4"/><circle className="accent-fill" cx="94" cy="45" r="5"/><circle cx="129" cy="45" r="4"/><text x="36" y="68">α</text><text x="90" y="68">C₀</text><text x="125" y="68">β</text></svg>;
-  if (kind === "melting") return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M18 73h124M25 73V12M36 65Q68 22 80 22t44 43M80 73V22"/><path className="accent" d="M89 62h36M107 62V40"/><circle className="accent-fill" cx="80" cy="22" r="4"/></svg>;
+  if (kind === "melting") return <svg viewBox="0 0 160 88" aria-hidden="true"><path className="axes" d="M20 8V72H140V8"/><path d="M20 30Q32 36 44 54Q56 26 70 22Q86 26 96 58Q118 38 140 28"/><path d="M20 54H70M70 58H140"/><path className="accent" d="M70 22V72"/><circle className="accent-fill" cx="70" cy="22" r="3"/><text x="34" y="18">L</text></svg>;
   if (kind === "section") return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M22 72 80 14l58 58Z"/><path d="M51 43q27 16 57 0M51 43 34 61M108 43l18 18"/><path className="accent" d="M51 43 108 43 80 68Z"/></svg>;
-  if (kind === "path") return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M18 72h124M24 72V12M34 23q25 8 43 27t52 14"/><path className="accent" d="M43 29c12 8 20 17 27 27s25 9 45 8"/><path className="accent-fill" d="m111 58 12 6-12 6Z"/></svg>;
-  return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M18 72h124M24 72V12M32 60Q54 19 80 49t49-23M28 55h104"/><circle className="accent-fill" cx="80" cy="49" r="4"/></svg>;
+  if (kind === "path") return <svg viewBox="0 0 160 88" aria-hidden="true"><path className="axes" d="M20 8V72H140V8"/><path d="M20 26Q52 32 74 54M140 30Q102 34 74 54"/><path d="M20 54H140"/><path className="accent" d="M46 18Q50 34 60 42Q68 48 74 54"/><circle className="accent-fill" cx="74" cy="54" r="3"/><text x="98" y="20">L</text></svg>;
+  return <svg viewBox="0 0 160 88" aria-hidden="true"><path className="axes" d="M20 8V72H140V8"/><path d="M20 24Q50 30 68 48M140 28Q102 32 68 48"/><path className="accent" d="M20 48H140"/><circle cx="68" cy="48" r="3"/><text x="74" y="18">L</text></svg>;
 }
 
 function RulesOverview() {
