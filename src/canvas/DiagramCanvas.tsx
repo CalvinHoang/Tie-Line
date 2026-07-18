@@ -431,8 +431,8 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
           );
         })()}
 
-        <rect className="board-frame" x={FRAME.left} y={FRAME.top} width={FRAME.right - FRAME.left} height={FRAME.bottom - FRAME.top} />
-        <text className="axis-label axis-t" x={FRAME.left - 42} y={FRAME.top + 8}>T</text>
+        <path className="board-frame" d={`M${FRAME.left} ${FRAME.top} V${FRAME.bottom} H${FRAME.right} V${FRAME.top}`} />
+        <text className="axis-label axis-t" x={FRAME.left - 42} y={(FRAME.top + FRAME.bottom) / 2}>T</text>
         <text className="axis-label" x={FRAME.left} y={FRAME.bottom + 26} textAnchor="middle">A</text>
         <text className="axis-label" x={FRAME.right} y={FRAME.bottom + 26} textAnchor="middle">B</text>
       </g>

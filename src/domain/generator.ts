@@ -47,6 +47,18 @@ export interface GeneratedRound {
 
 const point = (compositionBPercent: number, temperatureCelsius: number): LogicalPoint => ({ compositionBPercent, temperatureCelsius });
 
+// Boundary curvature follows the reference notes: liquidus and solidus branches
+// leave a melting point or dome apex almost flat and steepen into the invariant
+// they terminate on. `low` is the invariant-side end, `high` the hot end; `sag`
+// raises the control toward the hot end, `lean` slides it across the chord.
+// A sag of exactly 1 puts the control at the hot end's temperature, which makes
+// the tangent there horizontal — required where two branches meet at a dome
+// apex or consolute point so the junction is smooth rather than a corner.
+const bowedControl = (low: LogicalPoint, high: LogicalPoint, sag = 0.78, lean = 0.5): LogicalPoint => point(
+  low.compositionBPercent + (high.compositionBPercent - low.compositionBPercent) * lean,
+  low.temperatureCelsius + (high.temperatureCelsius - low.temperatureCelsius) * sag,
+);
+
 function randomForSeed(seed: number): () => number {
   let value = seed >>> 0;
   return () => {
@@ -176,8 +188,8 @@ function generateSimple(seed: number): GeneratedRound {
       { roleId: "right-eut", point: point(100, et) },
     ],
     curves: [
-      { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: point(ex * .46, et + (leftMelt - et) * .54), semanticRole: "liquidus-left" },
-      { type: "curve", startRoleId: "b-melt", endRoleId: "eutectic", recommendedControl: point(ex + (100 - ex) * .54, et + (rightMelt - et) * .54), semanticRole: "liquidus-right" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(ex, et), point(0, leftMelt)), semanticRole: "liquidus-left" },
+      { type: "curve", startRoleId: "b-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(ex, et), point(100, rightMelt)), semanticRole: "liquidus-right" },
     ],
     invariants: [{ type: "invariant-horizontal", startRoleId: "left-eut", endRoleId: "right-eut", interiorRoleIds: ["eutectic"], temperatureCelsius: et, expectedAssemblage: ["L", "alpha", "beta"], reactionType: "eutectic" }],
     expectedFields: [],
@@ -201,10 +213,10 @@ function generateLimited(seed: number): GeneratedRound {
   const leftMelt = integer(random, et + 260, 1060, 10);
   const rightMelt = integer(random, et + 210, 1030, 10);
   const curves: SolutionCurve[] = [
-    { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: point(ex * .44, et + (leftMelt - et) * .55), semanticRole: "liquidus-left" },
-    { type: "curve", startRoleId: "b-melt", endRoleId: "eutectic", recommendedControl: point(ex + (100 - ex) * .56, et + (rightMelt - et) * .55), semanticRole: "liquidus-right" },
-    { type: "curve", startRoleId: "a-melt", endRoleId: "alpha-eut", recommendedControl: point(ax * .52, et + (leftMelt - et) * .56), semanticRole: "solidus-left" },
-    { type: "curve", startRoleId: "b-melt", endRoleId: "beta-eut", recommendedControl: point(bx + (100 - bx) * .48, et + (rightMelt - et) * .56), semanticRole: "solidus-right" },
+    { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(ex, et), point(0, leftMelt)), semanticRole: "liquidus-left" },
+    { type: "curve", startRoleId: "b-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(ex, et), point(100, rightMelt)), semanticRole: "liquidus-right" },
+    { type: "curve", startRoleId: "a-melt", endRoleId: "alpha-eut", recommendedControl: bowedControl(point(ax, et), point(0, leftMelt), .7), semanticRole: "solidus-left" },
+    { type: "curve", startRoleId: "b-melt", endRoleId: "beta-eut", recommendedControl: bowedControl(point(bx, et), point(100, rightMelt), .7), semanticRole: "solidus-right" },
     { type: "curve", startRoleId: "alpha-low", endRoleId: "alpha-eut", recommendedControl: point(ax * .18, et * .54), semanticRole: "solvus-left" },
     { type: "curve", startRoleId: "beta-low", endRoleId: "beta-eut", recommendedControl: point(bx + (100 - bx) * .82, et * .54), semanticRole: "solvus-right" },
   ];
@@ -252,10 +264,10 @@ function generateCompound(seed: number, difficulty: Difficulty = "hard"): Genera
       { roleId: "gamma-e2", point: point(gx, e2t) }, { roleId: "e2", point: point(e2x, e2t) }, { roleId: "right-e2", point: point(100, e2t) },
     ],
     curves: [
-      { type: "curve", startRoleId: "a-melt", endRoleId: "e1", recommendedControl: point(e1x * .45, e1t + (leftMelt - e1t) * .54), semanticRole: "liquidus-alpha" },
-      { type: "curve", startRoleId: "gamma-peak", endRoleId: "e1", recommendedControl: point(e1x + (gx - e1x) * .55, e1t + (peak - e1t) * .54), semanticRole: "liquidus-gamma-left" },
-      { type: "curve", startRoleId: "gamma-peak", endRoleId: "e2", recommendedControl: point(gx + (e2x - gx) * .45, e2t + (peak - e2t) * .54), semanticRole: "liquidus-gamma-right" },
-      { type: "curve", startRoleId: "b-melt", endRoleId: "e2", recommendedControl: point(e2x + (100 - e2x) * .55, e2t + (rightMelt - e2t) * .54), semanticRole: "liquidus-beta" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "e1", recommendedControl: bowedControl(point(e1x, e1t), point(0, leftMelt)), semanticRole: "liquidus-alpha" },
+      { type: "curve", startRoleId: "gamma-peak", endRoleId: "e1", recommendedControl: bowedControl(point(e1x, e1t), point(gx, peak), 1), semanticRole: "liquidus-gamma-left" },
+      { type: "curve", startRoleId: "gamma-peak", endRoleId: "e2", recommendedControl: bowedControl(point(e2x, e2t), point(gx, peak), 1), semanticRole: "liquidus-gamma-right" },
+      { type: "curve", startRoleId: "b-melt", endRoleId: "e2", recommendedControl: bowedControl(point(e2x, e2t), point(100, rightMelt)), semanticRole: "liquidus-beta" },
       { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-e1", recommendedControl: point(gx, e1t * .5), semanticRole: "compound-line-low" },
       { type: "curve", startRoleId: "gamma-e1", endRoleId: "gamma-e2", recommendedControl: point(gx, (e1t + e2t) / 2), semanticRole: "compound-line-mid" },
       { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-peak", recommendedControl: point(gx, (e2t + peak) / 2), semanticRole: "compound-line-high" },
@@ -305,9 +317,9 @@ function generateIncongruentCompound(seed: number, difficulty: Difficulty = "eas
       { roleId: "right-peritectic", point: point(100, peritecticT) },
     ],
     curves: [
-      { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: point(ex * .4, eutecticT + (leftMelt - eutecticT) * .58), semanticRole: "liquidus-alpha" },
-      { type: "curve", startRoleId: "eutectic", endRoleId: "peritectic", recommendedControl: point((ex + px) / 2, peritecticT + 90), semanticRole: "liquidus-gamma" },
-      { type: "curve", startRoleId: "peritectic", endRoleId: "b-melt", recommendedControl: point(px + (100 - px) * .56, peritecticT + (rightMelt - peritecticT) * .5), semanticRole: "liquidus-beta" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(ex, eutecticT), point(0, leftMelt)), semanticRole: "liquidus-alpha" },
+      { type: "curve", startRoleId: "eutectic", endRoleId: "peritectic", recommendedControl: bowedControl(point(ex, eutecticT), point(px, peritecticT), .72), semanticRole: "liquidus-gamma" },
+      { type: "curve", startRoleId: "peritectic", endRoleId: "b-melt", recommendedControl: bowedControl(point(px, peritecticT), point(100, rightMelt)), semanticRole: "liquidus-beta" },
       { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-eut", recommendedControl: point(gx, eutecticT * .5), semanticRole: "compound-line-low" },
       { type: "curve", startRoleId: "gamma-eut", endRoleId: "gamma-peritectic", recommendedControl: point(gx, (eutecticT + peritecticT) / 2), semanticRole: "compound-line-high" },
     ],
@@ -360,8 +372,8 @@ function generateCompoundPolymorph(
       || (curve.startRoleId === "gamma-e2" && curve.endRoleId === "gamma-peak")
     ));
     solution.curves.push(
-      { type: "curve", startRoleId: "e1", endRoleId: "supersolidus-left", recommendedControl: point((e1x + transitionX) / 2, (e1t + transitionT) / 2 + 45), semanticRole: "liquidus-gamma-left-low" },
-      { type: "curve", startRoleId: "supersolidus-left", endRoleId: "gamma-peak", recommendedControl: point((transitionX + gx) / 2, transitionT + (peakT - transitionT) * .58), semanticRole: "liquidus-gamma-left-high" },
+      { type: "curve", startRoleId: "e1", endRoleId: "supersolidus-left", recommendedControl: bowedControl(point(e1x, e1t), point(transitionX, transitionT), .72), semanticRole: "liquidus-gamma-left-low" },
+      { type: "curve", startRoleId: "supersolidus-left", endRoleId: "gamma-peak", recommendedControl: bowedControl(point(transitionX, transitionT), point(gx, peakT), 1), semanticRole: "liquidus-gamma-left-high" },
       { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-supersolidus", recommendedControl: point(gx, (e2t + transitionT) / 2), semanticRole: "compound-line-upper-low" },
       { type: "curve", startRoleId: "gamma-supersolidus", endRoleId: "gamma-peak", recommendedControl: point(gx, (transitionT + peakT) / 2), semanticRole: "compound-line-upper-high" },
     );
@@ -442,12 +454,12 @@ function generateTripleEutectic(seed: number): GeneratedRound {
       { roleId: "delta-e3", point: point(g2x, e3t) }, { roleId: "e3", point: point(e3x, e3t) }, { roleId: "right-e3", point: point(100, e3t) },
     ],
     curves: [
-      { type: "curve", startRoleId: "a-melt", endRoleId: "e1", recommendedControl: point(e1x * .44, e1t + (aMelt - e1t) * .55), semanticRole: "liquidus-alpha" },
-      { type: "curve", startRoleId: "gamma-peak", endRoleId: "e1", recommendedControl: point(e1x + (g1x - e1x) * .56, e1t + (g1Peak - e1t) * .55), semanticRole: "liquidus-gamma-left" },
-      { type: "curve", startRoleId: "gamma-peak", endRoleId: "e2", recommendedControl: point(g1x + (e2x - g1x) * .44, e2t + (g1Peak - e2t) * .55), semanticRole: "liquidus-gamma-right" },
-      { type: "curve", startRoleId: "delta-peak", endRoleId: "e2", recommendedControl: point(e2x + (g2x - e2x) * .56, e2t + (g2Peak - e2t) * .55), semanticRole: "liquidus-delta-left" },
-      { type: "curve", startRoleId: "delta-peak", endRoleId: "e3", recommendedControl: point(g2x + (e3x - g2x) * .44, e3t + (g2Peak - e3t) * .55), semanticRole: "liquidus-delta-right" },
-      { type: "curve", startRoleId: "b-melt", endRoleId: "e3", recommendedControl: point(e3x + (100 - e3x) * .56, e3t + (bMelt - e3t) * .55), semanticRole: "liquidus-beta" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "e1", recommendedControl: bowedControl(point(e1x, e1t), point(0, aMelt)), semanticRole: "liquidus-alpha" },
+      { type: "curve", startRoleId: "gamma-peak", endRoleId: "e1", recommendedControl: bowedControl(point(e1x, e1t), point(g1x, g1Peak), 1), semanticRole: "liquidus-gamma-left" },
+      { type: "curve", startRoleId: "gamma-peak", endRoleId: "e2", recommendedControl: bowedControl(point(e2x, e2t), point(g1x, g1Peak), 1), semanticRole: "liquidus-gamma-right" },
+      { type: "curve", startRoleId: "delta-peak", endRoleId: "e2", recommendedControl: bowedControl(point(e2x, e2t), point(g2x, g2Peak), 1), semanticRole: "liquidus-delta-left" },
+      { type: "curve", startRoleId: "delta-peak", endRoleId: "e3", recommendedControl: bowedControl(point(e3x, e3t), point(g2x, g2Peak), 1), semanticRole: "liquidus-delta-right" },
+      { type: "curve", startRoleId: "b-melt", endRoleId: "e3", recommendedControl: bowedControl(point(e3x, e3t), point(100, bMelt)), semanticRole: "liquidus-beta" },
       { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-e1", recommendedControl: point(g1x, e1t / 2), semanticRole: "gamma-line-low" },
       { type: "curve", startRoleId: "gamma-e1", endRoleId: "gamma-e2", recommendedControl: point(g1x, (e1t + e2t) / 2), semanticRole: "gamma-line-mid" },
       { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-peak", recommendedControl: point(g1x, (e2t + g1Peak) / 2), semanticRole: "gamma-line-high" },
@@ -505,8 +517,8 @@ function generateSuperlatticeCompound(seed: number): GeneratedRound {
   );
   const firstOrderingCurveIndex = solution.curves.length;
   solution.curves.push(
-    { type: "curve", startRoleId: "order-left", endRoleId: "order-critical", recommendedControl: point(leftBaseX + (peakX - leftBaseX) * .3, orderT * .74), semanticRole: "superlattice-left" },
-    { type: "curve", startRoleId: "order-critical", endRoleId: "order-right", recommendedControl: point(peakX + (rightBaseX - peakX) * .7, orderT * .74), semanticRole: "superlattice-right" },
+    { type: "curve", startRoleId: "order-left", endRoleId: "order-critical", recommendedControl: bowedControl(point(leftBaseX, 0), point(peakX, orderT), 1, .32), semanticRole: "superlattice-left" },
+    { type: "curve", startRoleId: "order-critical", endRoleId: "order-right", recommendedControl: bowedControl(point(rightBaseX, 0), point(peakX, orderT), 1, .32), semanticRole: "superlattice-right" },
   );
   solution.puzzleId = `normal-superlattice-compound-v3-${seed}`;
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
@@ -546,12 +558,12 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "monotectic
       { roleId: "gamma-syntectic", point: point(gx, synT) },
     ],
     curves: [
-      { type: "curve", startRoleId: "a-melt", endRoleId: "left-eutectic", recommendedControl: point(e1x * .44, leftT + (aMelt - leftT) * .56), semanticRole: "liquidus-alpha" },
-      { type: "curve", startRoleId: "left-eutectic", endRoleId: "dome-left", recommendedControl: point((e1x + domeLeftX) / 2, leftT + (synT - leftT) * .52), semanticRole: "liquidus-gamma-left" },
-      { type: "curve", startRoleId: "dome-right", endRoleId: "right-eutectic", recommendedControl: point((domeRightX + e2x) / 2, rightT + (synT - rightT) * .52), semanticRole: "liquidus-gamma-right" },
-      { type: "curve", startRoleId: "right-eutectic", endRoleId: "b-melt", recommendedControl: point(e2x + (100 - e2x) * .56, rightT + (bMelt - rightT) * .56), semanticRole: "liquidus-beta" },
-      { type: "curve", startRoleId: "dome-left", endRoleId: "dome-peak", recommendedControl: point(domeLeftX + (gx - domeLeftX) * .28, synT + (domePeakT - synT) * .76), semanticRole: "immiscibility-left" },
-      { type: "curve", startRoleId: "dome-peak", endRoleId: "dome-right", recommendedControl: point(gx + (domeRightX - gx) * .72, synT + (domePeakT - synT) * .76), semanticRole: "immiscibility-right" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "left-eutectic", recommendedControl: bowedControl(point(e1x, leftT), point(0, aMelt)), semanticRole: "liquidus-alpha" },
+      { type: "curve", startRoleId: "left-eutectic", endRoleId: "dome-left", recommendedControl: bowedControl(point(e1x, leftT), point(domeLeftX, synT), .72), semanticRole: "liquidus-gamma-left" },
+      { type: "curve", startRoleId: "dome-right", endRoleId: "right-eutectic", recommendedControl: bowedControl(point(e2x, rightT), point(domeRightX, synT), .72), semanticRole: "liquidus-gamma-right" },
+      { type: "curve", startRoleId: "right-eutectic", endRoleId: "b-melt", recommendedControl: bowedControl(point(e2x, rightT), point(100, bMelt)), semanticRole: "liquidus-beta" },
+      { type: "curve", startRoleId: "dome-left", endRoleId: "dome-peak", recommendedControl: bowedControl(point(domeLeftX, synT), point(gx, domePeakT), 1, .32), semanticRole: "immiscibility-left" },
+      { type: "curve", startRoleId: "dome-peak", endRoleId: "dome-right", recommendedControl: bowedControl(point(domeRightX, synT), point(gx, domePeakT), 1, .32), semanticRole: "immiscibility-right" },
       { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-right", recommendedControl: point(gx, rightT / 2), semanticRole: "compound-line-low" },
       { type: "curve", startRoleId: "gamma-right", endRoleId: "gamma-left", recommendedControl: point(gx, (rightT + leftT) / 2), semanticRole: "compound-line-mid" },
       { type: "curve", startRoleId: "gamma-left", endRoleId: "gamma-syntectic", recommendedControl: point(gx, (leftT + synT) / 2), semanticRole: "compound-line-high" },
@@ -565,33 +577,36 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "monotectic
   };
   let innerLeftIndex = -1;
   if (spinodal) {
-    const innerLeftX = domeLeftX + 5;
-    const innerRightX = domeRightX - 5;
-    const innerPeakT = domePeakT - 70;
+    // Keep enough separation from the binodal for both stable two-liquid
+    // crescents to accept their phase labels. A fixed five-point inset made
+    // wider generated domes taper into fields that were not labelable.
+    const innerLeftX = gx - Math.max(2, Math.round((gx - domeLeftX) * .3));
+    const innerRightX = gx + Math.max(2, Math.round((domeRightX - gx) * .3));
+    // The spinodal is tangent to the binodal at the critical point, so both
+    // inner curves terminate on the dome-peak node with horizontal tangents.
     solution.points.push(
       { roleId: "spinodal-left", point: point(innerLeftX, synT) },
-      { roleId: "spinodal-peak", point: point(gx, innerPeakT) },
       { roleId: "spinodal-right", point: point(innerRightX, synT) },
     );
     solution.invariants[2].interiorRoleIds = ["spinodal-left", "gamma-syntectic", "spinodal-right"];
     innerLeftIndex = solution.curves.length;
     solution.curves.push(
-      { type: "curve", startRoleId: "spinodal-left", endRoleId: "spinodal-peak", recommendedControl: point(innerLeftX + (gx - innerLeftX) * .3, synT + (innerPeakT - synT) * .74), semanticRole: "spinodal-left" },
-      { type: "curve", startRoleId: "spinodal-peak", endRoleId: "spinodal-right", recommendedControl: point(gx + (innerRightX - gx) * .7, synT + (innerPeakT - synT) * .74), semanticRole: "spinodal-right" },
+      { type: "curve", startRoleId: "spinodal-left", endRoleId: "dome-peak", recommendedControl: bowedControl(point(innerLeftX, synT), point(gx, domePeakT), 1, .32), semanticRole: "spinodal-left" },
+      { type: "curve", startRoleId: "dome-peak", endRoleId: "spinodal-right", recommendedControl: bowedControl(point(innerRightX, synT), point(gx, domePeakT), 1, .32), semanticRole: "spinodal-right" },
     );
   }
   const domeLeftIndex = 4;
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
     if (spinodal && boundaries.has(`generated-curve:${innerLeftIndex}`) && boundaries.has(`generated-curve:${innerLeftIndex + 1}`)) return { role: "unstable-two-liquid", phases: ["L1", "L2"] };
-    if (boundaries.has(`generated-curve:${domeLeftIndex}`) && boundaries.has(`generated-curve:${domeLeftIndex + 1}`)) return { role: "two-liquid", phases: ["L1", "L2"] };
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
+    if (boundaries.has(`generated-curve:${domeLeftIndex}`) || boundaries.has(`generated-curve:${domeLeftIndex + 1}`)) return { role: "two-liquid", phases: ["L1", "L2"] };
     if (label.compositionBPercent < gx) {
       if (label.temperatureCelsius < leftT) return { role: "alpha-gamma", phases: ["alpha", "gamma"] };
       return label.compositionBPercent < e1x ? { role: "liquid-alpha", phases: ["L", "alpha"] } : { role: "liquid-gamma-left", phases: ["L", "gamma"] };
     }
     if (label.temperatureCelsius < rightT) return { role: "gamma-beta", phases: ["gamma", "beta"] };
     return label.compositionBPercent < e2x ? { role: "liquid-gamma-right", phases: ["L", "gamma"] } : { role: "liquid-beta", phases: ["L", "beta"] };
-  }, spinodal ? 9 : 8);
+  }, spinodal ? 10 : 8);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Homogeneous liquid", kind: "liquid", required: true },
     { id: "L1", symbol: "L₁", name: "Liquid 1", kind: "liquid", required: true },
@@ -624,8 +639,8 @@ function addSolidCriticalDome(base: GeneratedRound, family: "solid-spinodal" | "
   );
   const firstCurve = solution.curves.length;
   solution.curves.push(
-    { type: "curve", startRoleId: `${family}-left`, endRoleId: `${family}-critical`, recommendedControl: point(leftX + (peakX - leftX) * .3, peakT * .74), semanticRole: `${family}-left` },
-    { type: "curve", startRoleId: `${family}-critical`, endRoleId: `${family}-right`, recommendedControl: point(peakX + (rightX - peakX) * .7, peakT * .74), semanticRole: `${family}-right` },
+    { type: "curve", startRoleId: `${family}-left`, endRoleId: `${family}-critical`, recommendedControl: bowedControl(point(leftX, 0), point(peakX, peakT), 1, .32), semanticRole: `${family}-left` },
+    { type: "curve", startRoleId: `${family}-critical`, endRoleId: `${family}-right`, recommendedControl: bowedControl(point(rightX, 0), point(peakX, peakT), 1, .32), semanticRole: `${family}-right` },
   );
   solution.puzzleId = `hard-${family}-${base.seed}`;
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
@@ -745,8 +760,8 @@ function generateDecomposition(seed: number, spec: CriticalFamilySpec): Generate
       { roleId: "right-invariant", point: point(100, invariantT) },
     ],
     curves: [
-      { type: "curve", startRoleId: "left-high", endRoleId: "critical", recommendedControl: point(mx * .46, invariantT + (leftHigh - invariantT) * .54), semanticRole: `${spec.family}-left` },
-      { type: "curve", startRoleId: "right-high", endRoleId: "critical", recommendedControl: point(mx + (100 - mx) * .54, invariantT + (rightHigh - invariantT) * .54), semanticRole: `${spec.family}-right` },
+      { type: "curve", startRoleId: "left-high", endRoleId: "critical", recommendedControl: bowedControl(point(mx, invariantT), point(0, leftHigh)), semanticRole: `${spec.family}-left` },
+      { type: "curve", startRoleId: "right-high", endRoleId: "critical", recommendedControl: bowedControl(point(mx, invariantT), point(100, rightHigh)), semanticRole: `${spec.family}-right` },
     ],
     invariants: [{
       type: "invariant-horizontal",
@@ -823,8 +838,8 @@ function generateCriticalDome(seed: number, spec: CriticalFamilySpec): Generated
       { roleId: "right-limit", point: point(rightX, 0) },
     ],
     curves: [
-      { type: "curve", startRoleId: "left-limit", endRoleId: "critical", recommendedControl: point(leftX + (peakX - leftX) * .28, peakT * .72), semanticRole: `${spec.family}-left-limit` },
-      { type: "curve", startRoleId: "critical", endRoleId: "right-limit", recommendedControl: point(peakX + (rightX - peakX) * .72, peakT * .72), semanticRole: `${spec.family}-right-limit` },
+      { type: "curve", startRoleId: "left-limit", endRoleId: "critical", recommendedControl: bowedControl(point(leftX, 0), point(peakX, peakT), 1, .32), semanticRole: `${spec.family}-left-limit` },
+      { type: "curve", startRoleId: "critical", endRoleId: "right-limit", recommendedControl: bowedControl(point(rightX, 0), point(peakX, peakT), 1, .32), semanticRole: `${spec.family}-right-limit` },
     ],
     invariants: [],
     expectedFields: [],

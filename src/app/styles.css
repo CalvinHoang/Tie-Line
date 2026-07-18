@@ -132,7 +132,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .result-actions button { min-height: 44px; border: 1px solid var(--hairline); border-radius: 13px; color: var(--ink); background: transparent; cursor: pointer; }
 .result-actions button:last-child { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); font-weight: 760; }
 .board-surface { fill: var(--surface); }
-.board-frame { fill: none; stroke: #596068; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.board-frame { fill: none; stroke: #596068; stroke-width: 1.6; stroke-linecap: square; vector-effect: non-scaling-stroke; pointer-events: none; }
 .axis-label { font-size: 26px; font-weight: 650; fill: #aeb5bb; }
 .placement-grid line { stroke: #2c3238; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .field-target { fill: transparent; stroke: none; pointer-events: all; cursor: cell; transition: fill 160ms ease; }
@@ -470,9 +470,10 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .concept-diagram .accent { stroke: var(--accent); stroke-width: 2.8; }
 .concept-diagram .dashed { stroke-dasharray: 5 5; }
 .concept-diagram .fill { fill: rgb(86 212 210 / 8%); stroke: none; }
+.concept-diagram .hatch { stroke-width: 1; opacity: .5; }
 .concept-diagram circle { fill: var(--surface); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .concept-diagram .accent-fill { fill: var(--accent); }
-.concept-diagram text { fill: var(--muted); font-size: 9px; font-weight: 680; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.concept-diagram text { fill: var(--ink); font-size: 10px; font-weight: 680; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; paint-order: stroke; stroke: var(--paper); stroke-width: 3px; }
 .concept-diagram .axis-a, .concept-diagram .axis-b { font-size: 7px; }
 .concept-focus { max-width: 560px; margin: 0 auto; display: grid; justify-items: center; text-align: center; }
 .concept-focus .back-link { justify-self: start; min-height: 38px; margin-bottom: 4px; padding: 0; border: 0; color: var(--muted); background: transparent; cursor: pointer; font-size: 11px; }
@@ -495,6 +496,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .foundation-card { min-width: 0; padding: 14px; border: 1px solid var(--hairline); border-radius: 16px; background: var(--paper); }
 .foundation-card > svg { width: 100%; height: 86px; margin-bottom: 5px; }
 .foundation-card svg path { fill: none; stroke: #cdd3d6; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.foundation-card svg .axes { stroke: #626b72; stroke-width: 1.3; }
 .foundation-card svg circle { fill: var(--paper); stroke: #cdd3d6; stroke-width: 2; }
 .foundation-card svg .accent { stroke: var(--accent); }
 .foundation-card svg .accent-fill { fill: var(--accent); stroke: none; }
