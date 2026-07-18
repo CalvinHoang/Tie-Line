@@ -577,8 +577,11 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "monotectic
   };
   let innerLeftIndex = -1;
   if (spinodal) {
-    const innerLeftX = domeLeftX + 5;
-    const innerRightX = domeRightX - 5;
+    // Keep enough separation from the binodal for both stable two-liquid
+    // crescents to accept their phase labels. A fixed five-point inset made
+    // wider generated domes taper into fields that were not labelable.
+    const innerLeftX = gx - Math.max(2, Math.round((gx - domeLeftX) * .3));
+    const innerRightX = gx + Math.max(2, Math.round((domeRightX - gx) * .3));
     // The spinodal is tangent to the binodal at the critical point, so both
     // inner curves terminate on the dome-peak node with horizontal tangents.
     solution.points.push(
