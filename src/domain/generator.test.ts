@@ -3,6 +3,7 @@ import { pointInPolygon, sameLogicalPoint } from "./geometry";
 import { createLabelingState } from "../editor/state";
 import { validateSubmit } from "../game/validator";
 import { generateEutecticRound, generateRound, intermediateFormula, type Difficulty } from "./generator";
+import { auditPhaseEquilibria } from "./phase-equilibria-validator";
 
 describe("procedural phase-diagram generator", () => {
   it("is deterministic for a seed and varies between seeds", () => {
@@ -52,26 +53,26 @@ describe("procedural phase-diagram generator", () => {
   });
 
   it("uses the agreed reaction pools and complexity limits", () => {
-    const easy = Array.from({ length: 5 }, (_, seed) => generateRound(seed, "easy"));
-    const normal = Array.from({ length: 6 }, (_, seed) => generateRound(seed, "normal"));
-    const hard = Array.from({ length: 10 }, (_, seed) => generateRound(seed, "hard"));
-    expect(new Set(easy.map((round) => round.family))).toEqual(new Set(["compound-double-eutectic", "peritectic", "subsolidus-polymorph", "simple-eutectic", "peritectoid"]));
-    expect(new Set(normal.map((round) => round.family))).toEqual(new Set(["compound-double-eutectic", "peritectic", "subsolidus-polymorph", "peritectoid", "supersolidus-polymorph", "superlattice"]));
+    const easy = Array.from({ length: 6 }, (_, seed) => generateRound(seed, "easy"));
+    const normal = Array.from({ length: 7 }, (_, seed) => generateRound(seed, "normal"));
+    const hard = Array.from({ length: 12 }, (_, seed) => generateRound(seed, "hard"));
+    expect(new Set(easy.map((round) => round.family))).toEqual(new Set(["compound-double-eutectic", "peritectic", "limited-eutectic", "simple-eutectic", "peritectoid", "subsolidus-polymorph"]));
+    expect(new Set(normal.map((round) => round.family))).toEqual(new Set(["compound-double-eutectic", "peritectic", "limited-eutectic", "peritectoid", "subsolidus-polymorph", "supersolidus-polymorph", "superlattice"]));
     expect(new Set(hard.map((round) => round.family))).toEqual(new Set([
       "triple-eutectic", "syntectic", "monotectic", "liquid-spinodal", "compound-double-eutectic",
-      "peritectic", "subsolidus-polymorph", "peritectoid", "supersolidus-polymorph", "superlattice",
+      "peritectic", "limited-eutectic", "peritectoid", "subsolidus-polymorph", "supersolidus-polymorph", "superlattice", "simple-eutectic",
     ]));
-    expect(easy.every((round) => (round.intermediatePhaseCount ?? 0) <= 1 && (round.criticalPointCount ?? 0) >= 1)).toBe(true);
-    expect(normal.every((round) => (round.intermediatePhaseCount ?? 0) <= 2 && (round.criticalPointCount ?? 0) >= 1)).toBe(true);
-    expect(hard.every((round) => (round.intermediatePhaseCount ?? 0) <= 2 && (round.criticalPointCount ?? 0) >= 1)).toBe(true);
+    expect(easy.every((round) => (round.intermediatePhaseCount ?? 0) <= 1 && (round.reactionTypes?.length ?? 0) >= 1)).toBe(true);
+    expect(normal.every((round) => (round.intermediatePhaseCount ?? 0) <= 2 && (round.reactionTypes?.length ?? 0) >= 1)).toBe(true);
+    expect(hard.every((round) => (round.intermediatePhaseCount ?? 0) <= 2 && (round.reactionTypes?.length ?? 0) >= 1)).toBe(true);
     expect([...easy, ...normal, ...hard].every((round) => (round.layoutQualityScore ?? 0) > 0)).toBe(true);
   });
 
   it("keeps both compound eutectics tied to invariant horizontals", () => {
     const affected = [
-      generateRound(2, "normal"),
-      generateRound(4, "normal"),
-      generateRound(5, "normal"),
+      generateRound(0, "easy"),
+      generateRound(0, "normal"),
+      generateRound(4, "hard"),
     ];
     for (const round of affected) {
       const eutectics = round.solution.invariants.filter((item) => item.reactionType === "eutectic");
@@ -118,11 +119,47 @@ describe("procedural phase-diagram generator", () => {
     expect(spinodal.solution.invariants.some((item) => item.reactionType === "spinodal-decomposition")).toBe(false);
     expect(spinodal.solution.invariants.some((item) => item.reactionType === "syntectic")).toBe(true);
     expect(spinodal.reactionTypes).toContain("liquid-spinodal");
+    expect(spinodal.puzzle.expectedFieldCount).toBe(8);
+    expect(spinodal.solution.expectedFields.filter((field) => field.expectedAssemblage.join("+") === "L1+L2")).toHaveLength(1);
+    expect(spinodal.solution.expectedFields.some((field) => field.role === "unstable-two-liquid")).toBe(false);
+    expect(spinodal.solution.curves.filter((curve) => curve.semanticRole?.startsWith("spinodal-"))
+      .every((curve) => curve.fieldBoundary === false)).toBe(true);
+  });
+
+  it("generates finite terminal solid-solution fields for partial solubility", () => {
+    const limited = generateRound(2, "normal");
+    expect(limited.family).toBe("limited-eutectic");
+    expect(limited.solution.expectedFields.filter((field) => field.texture === "partial-solubility"))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ expectedAssemblage: ["alpha"] }),
+        expect.objectContaining({ expectedAssemblage: ["beta"] }),
+      ]));
+    expect(limited.puzzle.expectedFieldCount).toBe(6);
+  });
+
+  it("models every transformation family with finite solid-solution domains", () => {
+    const subsolidus = generateRound(4, "normal");
+    expect(subsolidus.family).toBe("subsolidus-polymorph");
+    expect(subsolidus.solution.expectedFields.map((field) => field.expectedAssemblage.join("+")))
+      .toEqual(expect.arrayContaining(["gamma", "gamma+delta", "delta"]));
+
+    const supersolidus = generateRound(5, "normal");
+    expect(supersolidus.family).toBe("supersolidus-polymorph");
+    expect(supersolidus.solution.invariants.map((invariant) => invariant.reactionType)).toEqual(["eutectic", "peritectic"]);
+    expect(supersolidus.solution.expectedFields.map((field) => field.expectedAssemblage.join("+")))
+      .toEqual(expect.arrayContaining(["gamma", "gamma+delta", "delta"]));
+    expect(supersolidus.puzzle.expectedFieldCount).toBe(9);
+
+    const ordering = generateRound(6, "normal");
+    expect(ordering.family).toBe("superlattice");
+    expect(ordering.solution.expectedFields.map((field) => field.expectedAssemblage.join("+")))
+      .toEqual(expect.arrayContaining(["gamma", "delta"]));
+    expect(ordering.solution.curves.filter((curve) => curve.semanticRole?.startsWith("superlattice-"))).toHaveLength(2);
+    expect(ordering.puzzle.expectedFieldCount).toBe(4);
   });
 
   it("keeps every generated dome tangent horizontal at its apex", () => {
     const domes = [
-      { round: generateRound(5, "normal"), peakRoleId: "order-critical" },
       { round: generateRound(1, "hard"), peakRoleId: "dome-peak" },
       { round: generateRound(3, "hard"), peakRoleId: "dome-peak" },
       { round: generateRound(2, "hard"), peakRoleId: "dome-peak" },
@@ -136,6 +173,40 @@ describe("procedural phase-diagram generator", () => {
         expect(curve.recommendedControl.temperatureCelsius, `${round.family} ${curve.semanticRole}`).toBe(peak.temperatureCelsius);
       }
     }
+  });
+
+  it("passes every generated round through the independent equilibrium audit", () => {
+    for (const difficulty of ["easy", "normal", "hard"] as const) {
+      for (let seed = 0; seed < 250; seed += 1) {
+        const round = generateRound(seed, difficulty);
+        expect(auditPhaseEquilibria(round.puzzle, round.solution), `${difficulty} seed ${seed} ${round.family}`)
+          .toMatchObject({ valid: true, violations: [] });
+      }
+    }
+  });
+
+  it("rejects degenerate invariant compositions and all-phases-at-once boundaries", () => {
+    const round = generateRound(4, "easy");
+    const degenerate = structuredClone(round);
+    const productRole = degenerate.solution.invariants.find((item) => item.reactionType === "peritectoid")!.interiorRoleIds[0];
+    const productPoint = degenerate.solution.points.find((item) => item.roleId === productRole)!;
+    productPoint.point.compositionBPercent = 100;
+    const audit = auditPhaseEquilibria(degenerate.puzzle, degenerate.solution);
+    expect(audit.valid).toBe(false);
+    expect(audit.violations.map((item) => item.ruleId)).toContain("invariant-composition-order");
+
+    const adjacency = structuredClone(generateRound(2, "normal"));
+    const alphaField = adjacency.solution.expectedFields.find((field) => field.role === "alpha")!;
+    alphaField.expectedAssemblage = ["beta"];
+    const adjacencyAudit = auditPhaseEquilibria(adjacency.puzzle, adjacency.solution);
+    expect(adjacencyAudit.valid).toBe(false);
+    expect(adjacencyAudit.violations.map((item) => item.ruleId)).toContain("curve-field-adjacency");
+
+    const collapsedOrdering = structuredClone(generateRound(6, "normal"));
+    collapsedOrdering.solution.expectedFields.find((field) => field.expectedAssemblage[0] === "delta")!.expectedAssemblage = ["gamma"];
+    const orderingAudit = auditPhaseEquilibria(collapsedOrdering.puzzle, collapsedOrdering.solution);
+    expect(orderingAudit.valid).toBe(false);
+    expect(orderingAudit.violations.map((item) => item.ruleId)).toContain("phase-variant-finite-domain");
   });
 
   it("defines every phase referenced by generated fields and invariants", () => {
@@ -172,7 +243,8 @@ describe("procedural phase-diagram generator", () => {
       const baseSymbols = new Set<string>();
       for (const composition of puzzle.intermediateCompositions) {
         const groupPhases = composition.phaseIds.map((phaseId) => puzzle.phases.find((phase) => phase.id === phaseId)!);
-        expect(groupPhases.every((phase) => phase.kind === "line-compound" && phase.compositionGroupId === composition.id), family).toBe(true);
+        expect(groupPhases.every((phase) => ["line-compound", "intermediate-solid-solution"].includes(phase.kind)
+          && phase.compositionGroupId === composition.id), family).toBe(true);
         const unprimedSymbols = new Set(groupPhases.map((phase) => phase.symbol.replaceAll("′", "")));
         expect(unprimedSymbols.size, `${family} ${composition.label}`).toBe(1);
         const baseSymbol = [...unprimedSymbols][0];

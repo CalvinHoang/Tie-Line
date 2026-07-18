@@ -85,7 +85,8 @@ export function extractFaces(
   geometry: PlayerGeometry[],
   previousCells: ExtractedCell[] = [],
 ): ExtractedCell[] {
-  const { vertices, edges } = buildPlanarGraph(points, geometry);
+  const fieldGeometry = geometry.filter((item) => item.type !== "curve" || item.fieldBoundary !== false);
+  const { vertices, edges } = buildPlanarGraph(points, fieldGeometry);
   const incident = new Map<string, Edge[]>();
   for (const edge of edges) {
     incident.set(edge.a, [...(incident.get(edge.a) ?? []), edge]);
@@ -110,7 +111,7 @@ export function extractFaces(
         if (visited.has(key) && key !== startKey) break;
         visited.add(key);
         polygon.push(vertices.get(from)!.point);
-        boundary.push({ geometryId: edge.sourceId, direction: edge.a === from ? "forward" : "reverse" });
+        boundary.push({ geometryId: edge.sourceId, segmentId: edge.id, direction: edge.a === from ? "forward" : "reverse" });
         sourceIds.push(edge.sourceId);
         const options = [...(incident.get(to) ?? [])].sort((left, right) => {
           const leftOther = left.a === to ? left.b : left.a;

@@ -1,5 +1,6 @@
 import { extractFaces } from "../canvas/face-extraction";
 import { polygonArea, sameLogicalPoint } from "./geometry";
+import { assertPhaseEquilibria } from "./phase-equilibria-validator";
 import type {
   ExpectedFieldSpec,
   HiddenSolution,
@@ -86,6 +87,8 @@ function generatedGeometry(solution: HiddenSolution): { points: PlayerPoint[]; g
       endPointId: `point:${curve.endRoleId}`,
       control: curve.recommendedControl,
       createdBy: "generated" as const,
+      semanticRole: curve.semanticRole,
+      fieldBoundary: curve.fieldBoundary,
     })),
     ...solution.invariants.map((invariant, index) => ({
       type: "invariant-horizontal" as const,
@@ -103,13 +106,13 @@ function generatedGeometry(solution: HiddenSolution): { points: PlayerPoint[]; g
 
 function deriveExpectedFields(
   solution: HiddenSolution,
-  classify: (label: LogicalPoint, boundaryIds: Set<string>) => { role: string; phases: string[] },
+  classify: (label: LogicalPoint, boundaryIds: Set<string>) => { role: string; phases: string[]; texture?: ExpectedFieldSpec["texture"] },
   expectedCount: number,
 ): ExpectedFieldSpec[] {
   const { points, geometry } = generatedGeometry(solution);
   const fields = extractFaces(points, geometry).map((cell) => {
     const match = classify(cell.labelPoint, new Set(cell.boundary.map((item) => item.geometryId)));
-    return { role: match.role, expectedAssemblage: match.phases, witnessPoint: cell.labelPoint };
+    return { role: match.role, expectedAssemblage: match.phases, witnessPoint: cell.labelPoint, texture: match.texture };
   });
   if (fields.length !== expectedCount) throw new Error(`${solution.puzzleId} produced ${fields.length} fields; expected ${expectedCount}.`);
   return fields;
@@ -165,7 +168,7 @@ function intermediateRules(
   endMemberLabels: PuzzleDefinition["endMemberLabels"],
 ): { phases: PhaseDefinition[]; intermediateCompositions: PuzzleDefinition["intermediateCompositions"] } {
   const groupedPhases = new Map<string, PhaseDefinition[]>();
-  inventory.filter((phase) => phase.kind === "line-compound").forEach((phase) => {
+  inventory.filter((phase) => phase.kind === "line-compound" || phase.kind === "intermediate-solid-solution").forEach((phase) => {
     const groupId = phase.compositionGroupId ?? phase.id;
     groupedPhases.set(groupId, [...(groupedPhases.get(groupId) ?? []), phase]);
   });
@@ -285,7 +288,7 @@ function generateSimple(seed: number): GeneratedRound {
   return { seed, difficulty: "easy", family: "simple-eutectic", solution, puzzle: puzzleFrom(seed, "easy", "Simple eutectic", solution, requiredInvariants) };
 }
 
-function generateLimited(seed: number): GeneratedRound {
+function generateLimited(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
   const random = randomForSeed(seed);
   const ex = integer(random, 34, 66);
   const et = integer(random, 480, 650, 10);
@@ -302,7 +305,7 @@ function generateLimited(seed: number): GeneratedRound {
     { type: "curve", startRoleId: "beta-low", endRoleId: "beta-eut", recommendedControl: point(bx + (100 - bx) * .82, et * .54), semanticRole: "solvus-right" },
   ];
   const solution: HiddenSolution = {
-    puzzleId: `normal-limited-eutectic-v2-${seed}`,
+    puzzleId: `${difficulty}-limited-eutectic-v3-${seed}`,
     points: [
       { roleId: "a-melt", point: point(0, leftMelt) }, { roleId: "b-melt", point: point(100, rightMelt) },
       { roleId: "alpha-eut", point: point(ax, et) }, { roleId: "eutectic", point: point(ex, et) }, { roleId: "beta-eut", point: point(bx, et) },
@@ -314,8 +317,8 @@ function generateLimited(seed: number): GeneratedRound {
   };
   const rules = [
     { role: "liquid", boundaries: [0, 1], phases: ["L"] }, { role: "liquid-alpha", boundaries: [0, 2], phases: ["L", "alpha"] },
-    { role: "liquid-beta", boundaries: [1, 3], phases: ["L", "beta"] }, { role: "alpha", boundaries: [2, 4], phases: ["alpha"] },
-    { role: "beta", boundaries: [3, 5], phases: ["beta"] }, { role: "alpha-beta", boundaries: [4, 5], phases: ["alpha", "beta"] },
+    { role: "liquid-beta", boundaries: [1, 3], phases: ["L", "beta"] }, { role: "alpha", boundaries: [2, 4], phases: ["alpha"], texture: "partial-solubility" as const },
+    { role: "beta", boundaries: [3, 5], phases: ["beta"], texture: "partial-solubility" as const }, { role: "alpha-beta", boundaries: [4, 5], phases: ["alpha", "beta"] },
   ];
   solution.expectedFields = deriveExpectedFields(solution, (_label, boundaries) => {
     const match = rules.find((rule) => rule.boundaries.every((index) => boundaries.has(`generated-curve:${index}`)));
@@ -323,7 +326,7 @@ function generateLimited(seed: number): GeneratedRound {
     return match;
   }, 6);
   const requiredInvariants = [{ startRoleId: "alpha-eut", endRoleId: "beta-eut", interiorRoleIds: ["eutectic"], expectedAssemblage: ["L", "alpha", "beta"], reactionType: "eutectic" }];
-  return { seed, difficulty: "normal", family: "limited-eutectic", solution, puzzle: puzzleFrom(seed, "normal", "Limited-solubility eutectic", solution, requiredInvariants) };
+  return { seed, difficulty, family: "limited-eutectic", solution, puzzle: puzzleFrom(seed, difficulty, "Limited-solubility eutectic", solution, requiredInvariants) };
 }
 
 function generateCompound(seed: number, difficulty: Difficulty = "hard"): GeneratedRound {
@@ -424,84 +427,6 @@ function generateIncongruentCompound(seed: number, difficulty: Difficulty = "eas
   return { seed, difficulty, family: "peritectic", solution, puzzle: puzzleFrom(seed, difficulty, title, solution, requiredInvariants) };
 }
 
-function generateCompoundPolymorph(
-  seed: number,
-  difficulty: Difficulty,
-  supersolidus: boolean,
-): GeneratedRound {
-  const base = generateCompound(seed, difficulty);
-  const solution = structuredClone(base.solution);
-  const byRole = (roleId: string) => solution.points.find((item) => item.roleId === roleId)!.point;
-  const gx = byRole("gamma-peak").compositionBPercent;
-  const peakT = byRole("gamma-peak").temperatureCelsius;
-  const e1x = byRole("e1").compositionBPercent;
-  const e1t = byRole("e1").temperatureCelsius;
-  const e2t = byRole("e2").temperatureCelsius;
-  const deltaPhase: PhaseDefinition = { id: "delta", symbol: "δ", name: "Intermediate polymorph", kind: "line-compound", required: true, compositionGroupId: "gamma" };
-
-  if (supersolidus) {
-    const transitionT = Math.round((Math.max(e1t, e2t) + peakT) / 20) * 10;
-    const transitionX = Math.round(e1x + (gx - e1x) * .62);
-    solution.points.push(
-      { roleId: "supersolidus-left", point: point(transitionX, transitionT) },
-      { roleId: "gamma-supersolidus", point: point(gx, transitionT) },
-    );
-    solution.curves = solution.curves.filter((curve) => !(
-      (curve.startRoleId === "gamma-peak" && curve.endRoleId === "e1")
-      || (curve.startRoleId === "gamma-e2" && curve.endRoleId === "gamma-peak")
-    ));
-    solution.curves.push(
-      { type: "curve", startRoleId: "e1", endRoleId: "supersolidus-left", recommendedControl: bowedControl(point(e1x, e1t), point(transitionX, transitionT), .72), semanticRole: "liquidus-gamma-left-low" },
-      { type: "curve", startRoleId: "supersolidus-left", endRoleId: "gamma-peak", recommendedControl: bowedControl(point(transitionX, transitionT), point(gx, peakT), 1), semanticRole: "liquidus-gamma-left-high" },
-      { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-supersolidus", recommendedControl: point(gx, (e2t + transitionT) / 2), semanticRole: "compound-line-upper-low" },
-      { type: "curve", startRoleId: "gamma-supersolidus", endRoleId: "gamma-peak", recommendedControl: point(gx, (transitionT + peakT) / 2), semanticRole: "compound-line-upper-high" },
-    );
-    solution.invariants.push({ type: "invariant-horizontal", startRoleId: "supersolidus-left", endRoleId: "gamma-supersolidus", interiorRoleIds: [], temperatureCelsius: transitionT, expectedAssemblage: ["L", "gamma", "delta"], reactionType: "supersolidus-polymorphism" });
-    solution.puzzleId = `${difficulty}-supersolidus-compound-v3-${seed}`;
-    solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
-      if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
-      if (label.compositionBPercent < gx && label.temperatureCelsius < e1t) return { role: "alpha-gamma", phases: ["alpha", "gamma"] };
-      if (label.compositionBPercent > gx) return { role: "gamma-beta", phases: ["gamma", "beta"] };
-      if (label.compositionBPercent > transitionX && label.compositionBPercent < gx && label.temperatureCelsius > transitionT) return { role: "liquid-delta", phases: ["L", "delta"] };
-      if (label.compositionBPercent < gx) return label.compositionBPercent < e1x ? { role: "liquid-alpha", phases: ["L", "alpha"] } : { role: "liquid-gamma-left", phases: ["L", "gamma"] };
-      return { role: "gamma-beta", phases: ["gamma", "beta"] };
-    }, 8);
-  } else {
-    const transitionT = Math.round(e1t * .46 / 10) * 10;
-    solution.points.push(
-      { roleId: "left-subsolidus", point: point(0, transitionT) },
-      { roleId: "gamma-subsolidus", point: point(gx, transitionT) },
-    );
-    solution.curves = solution.curves.filter((curve) => !(curve.startRoleId === "gamma-low" && curve.endRoleId === "gamma-e1"));
-    solution.curves.push(
-      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-subsolidus", recommendedControl: point(gx, transitionT / 2), semanticRole: "compound-line-lower-ordered" },
-      { type: "curve", startRoleId: "gamma-subsolidus", endRoleId: "gamma-e1", recommendedControl: point(gx, (transitionT + e1t) / 2), semanticRole: "compound-line-lower-parent" },
-    );
-    solution.invariants.push({ type: "invariant-horizontal", startRoleId: "left-subsolidus", endRoleId: "gamma-subsolidus", interiorRoleIds: [], temperatureCelsius: transitionT, expectedAssemblage: ["alpha", "gamma", "delta"], reactionType: "subsolidus-polymorphism" });
-    solution.puzzleId = `${difficulty}-subsolidus-polymorphism-compound-v3-${seed}`;
-    solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
-      if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
-      if (label.compositionBPercent < gx && label.temperatureCelsius < transitionT) return { role: "alpha-delta", phases: ["alpha", "delta"] };
-      if (label.compositionBPercent < gx && label.temperatureCelsius < e1t) return { role: "alpha-gamma", phases: ["alpha", "gamma"] };
-      if (label.compositionBPercent > gx) return { role: "gamma-beta", phases: ["gamma", "beta"] };
-      if (label.compositionBPercent < gx) return label.compositionBPercent < e1x ? { role: "liquid-alpha", phases: ["L", "alpha"] } : { role: "liquid-gamma-left", phases: ["L", "gamma"] };
-      return { role: "gamma-beta", phases: ["gamma", "beta"] };
-    }, 8);
-  }
-
-  const requiredInvariants = solution.invariants.map((item) => ({ startRoleId: item.startRoleId, endRoleId: item.endRoleId, interiorRoleIds: item.interiorRoleIds, expectedAssemblage: item.expectedAssemblage, reactionType: item.reactionType }));
-  const title = supersolidus ? "Supersolidus polymorphism of an intermediate compound"
-    : "Subsolidus polymorphism of an intermediate compound";
-  const family: DiagramFamily = supersolidus ? "supersolidus-polymorph" : "subsolidus-polymorph";
-  return {
-    seed,
-    difficulty,
-    family,
-    solution,
-    puzzle: puzzleFrom(seed, difficulty, title, solution, requiredInvariants, [...phases(true), deltaPhase]),
-  };
-}
-
 function generateTripleEutectic(seed: number): GeneratedRound {
   const random = randomForSeed(seed ^ 0x3ea9c7);
   const g1x = 33;
@@ -571,40 +496,6 @@ function generateTripleEutectic(seed: number): GeneratedRound {
   return { seed, difficulty: "hard", family: "triple-eutectic", solution, puzzle: puzzleFrom(seed, "hard", "Two intermediate compounds with three eutectics", solution, requiredInvariants, inventory) };
 }
 
-function generateSuperlatticeCompound(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
-  const base = generateCompound(seed, difficulty);
-  const solution = structuredClone(base.solution);
-  const byRole = (roleId: string) => solution.points.find((item) => item.roleId === roleId)!.point;
-  const gx = byRole("gamma-peak").compositionBPercent;
-  const e1x = byRole("e1").compositionBPercent;
-  const e1t = byRole("e1").temperatureCelsius;
-  const leftBaseX = Math.max(7, Math.round(e1x * .38));
-  const rightBaseX = Math.round(gx - (gx - e1x) * .2);
-  const peakX = Math.round((leftBaseX + rightBaseX) / 2);
-  const orderT = Math.round(e1t * .62 / 10) * 10;
-  solution.points.push(
-    { roleId: "order-left", point: point(leftBaseX, 0) },
-    { roleId: "order-critical", point: point(peakX, orderT) },
-    { roleId: "order-right", point: point(rightBaseX, 0) },
-  );
-  const firstOrderingCurveIndex = solution.curves.length;
-  solution.curves.push(
-    { type: "curve", startRoleId: "order-left", endRoleId: "order-critical", recommendedControl: bowedControl(point(leftBaseX, 0), point(peakX, orderT), 1, .32), semanticRole: "superlattice-left" },
-    { type: "curve", startRoleId: "order-critical", endRoleId: "order-right", recommendedControl: bowedControl(point(rightBaseX, 0), point(peakX, orderT), 1, .32), semanticRole: "superlattice-right" },
-  );
-  solution.puzzleId = `${difficulty}-superlattice-compound-v3-${seed}`;
-  solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
-    if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
-    if (boundaries.has(`generated-curve:${firstOrderingCurveIndex}`) && boundaries.has(`generated-curve:${firstOrderingCurveIndex + 1}`)) return { role: "alpha-delta", phases: ["alpha", "delta"] };
-    if (label.compositionBPercent < gx && label.temperatureCelsius < e1t) return { role: "alpha-gamma", phases: ["alpha", "gamma"] };
-    if (label.compositionBPercent > gx) return { role: "gamma-beta", phases: ["gamma", "beta"] };
-    return label.compositionBPercent < e1x ? { role: "liquid-alpha", phases: ["L", "alpha"] } : { role: "liquid-gamma", phases: ["L", "gamma"] };
-  }, 8);
-  const inventory = [...phases(true), { id: "delta", symbol: "γ′", name: "Ordered intermediate superlattice", kind: "line-compound" as const, required: true, compositionGroupId: "gamma" }];
-  const requiredInvariants = solution.invariants.map((item) => ({ startRoleId: item.startRoleId, endRoleId: item.endRoleId, interiorRoleIds: item.interiorRoleIds, expectedAssemblage: item.expectedAssemblage, reactionType: item.reactionType }));
-  return { seed, difficulty, family: "superlattice", solution, puzzle: puzzleFrom(seed, difficulty, "Intermediate compound with superlattice ordering", solution, requiredInvariants, inventory) };
-}
-
 function generateImmiscibleHard(seed: number, variant: "syntectic" | "liquid-spinodal"): GeneratedRound {
   const spinodal = variant === "liquid-spinodal";
   const random = randomForSeed(seed ^ 0x1a2b7f);
@@ -647,11 +538,10 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "liquid-spi
     ],
     expectedFields: [],
   };
-  let innerLeftIndex = -1;
   if (spinodal) {
-    // Keep enough separation from the binodal for both stable two-liquid
-    // crescents to accept their phase labels. A fixed five-point inset made
-    // wider generated domes taper into fields that were not labelable.
+    // The spinodal is a stability limit inside the equilibrium two-liquid
+    // field. It is rendered as a guide/texture overlay and must not create
+    // additional phase-label cells.
     const innerLeftX = gx - Math.max(2, Math.round((gx - domeLeftX) * .3));
     const innerRightX = gx + Math.max(2, Math.round((domeRightX - gx) * .3));
     // The spinodal is tangent to the binodal at the critical point, so both
@@ -660,16 +550,13 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "liquid-spi
       { roleId: "spinodal-left", point: point(innerLeftX, synT) },
       { roleId: "spinodal-right", point: point(innerRightX, synT) },
     );
-    solution.invariants[2].interiorRoleIds = ["spinodal-left", "gamma-syntectic", "spinodal-right"];
-    innerLeftIndex = solution.curves.length;
     solution.curves.push(
-      { type: "curve", startRoleId: "spinodal-left", endRoleId: "dome-peak", recommendedControl: bowedControl(point(innerLeftX, synT), point(gx, domePeakT), 1, .32), semanticRole: "spinodal-left" },
-      { type: "curve", startRoleId: "dome-peak", endRoleId: "spinodal-right", recommendedControl: bowedControl(point(innerRightX, synT), point(gx, domePeakT), 1, .32), semanticRole: "spinodal-right" },
+      { type: "curve", startRoleId: "spinodal-left", endRoleId: "dome-peak", recommendedControl: bowedControl(point(innerLeftX, synT), point(gx, domePeakT), 1, .32), semanticRole: "spinodal-left", fieldBoundary: false },
+      { type: "curve", startRoleId: "dome-peak", endRoleId: "spinodal-right", recommendedControl: bowedControl(point(innerRightX, synT), point(gx, domePeakT), 1, .32), semanticRole: "spinodal-right", fieldBoundary: false },
     );
   }
   const domeLeftIndex = 4;
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
-    if (spinodal && boundaries.has(`generated-curve:${innerLeftIndex}`) && boundaries.has(`generated-curve:${innerLeftIndex + 1}`)) return { role: "unstable-two-liquid", phases: ["L1", "L2"] };
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has(`generated-curve:${domeLeftIndex}`) || boundaries.has(`generated-curve:${domeLeftIndex + 1}`)) return { role: "two-liquid", phases: ["L1", "L2"] };
     if (label.compositionBPercent < gx) {
@@ -678,7 +565,7 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "liquid-spi
     }
     if (label.temperatureCelsius < rightT) return { role: "gamma-beta", phases: ["gamma", "beta"] };
     return label.compositionBPercent < e2x ? { role: "liquid-gamma-right", phases: ["L", "gamma"] } : { role: "liquid-beta", phases: ["L", "beta"] };
-  }, spinodal ? 10 : 8);
+  }, 8);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Homogeneous liquid", kind: "liquid", required: true },
     { id: "L1", symbol: "L₁", name: "Liquid 1", kind: "liquid", required: true },
@@ -726,7 +613,7 @@ function generateMonotectic(seed: number, difficulty: Difficulty = "hard"): Gene
     }],
     expectedFields: [],
   };
-  solution.expectedFields = deriveExpectedFields(solution, (_label, boundaries) => {
+  solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
     if (boundaries.has("frame-top")) return { role: "L1", phases: ["L1"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "L1-L2", phases: ["L1", "L2"] };
     if (boundaries.has("frame-bottom")) return { role: "L2-alpha", phases: ["L2", "alpha"] };
@@ -754,6 +641,151 @@ function requiredInvariantsFor(solution: HiddenSolution): RequiredInvariantSpec[
     expectedAssemblage: item.expectedAssemblage,
     reactionType: item.reactionType,
   }));
+}
+
+function generateSubsolidusPolymorph(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
+  const random = randomForSeed(seed ^ 0x51b50d);
+  const aMelt = integer(random, 930, 1040, 10);
+  const bMelt = integer(random, 900, 1020, 10);
+  const liquidusControl = point(50, Math.min(1080, Math.max(aMelt, bMelt) + 70));
+  const solidusControl = point(50, Math.min(aMelt, bMelt) - 190);
+  const leftTransition = integer(random, 300, 400, 10);
+  const rightTransition = leftTransition + integer(random, -40, 60, 10);
+  const meanTransition = (leftTransition + rightTransition) / 2;
+  const solution: HiddenSolution = {
+    puzzleId: `${difficulty}-subsolidus-polymorph-solution-v1-${seed}`,
+    points: [
+      { roleId: "a-melt", point: point(0, aMelt) },
+      { roleId: "b-melt", point: point(100, bMelt) },
+      { roleId: "polymorph-left", point: point(0, leftTransition) },
+      { roleId: "polymorph-right", point: point(100, rightTransition) },
+    ],
+    curves: [
+      { type: "curve", startRoleId: "a-melt", endRoleId: "b-melt", recommendedControl: liquidusControl, semanticRole: "complete-solution-liquidus" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "b-melt", recommendedControl: solidusControl, semanticRole: "complete-solution-solidus" },
+      { type: "curve", startRoleId: "polymorph-left", endRoleId: "polymorph-right", recommendedControl: point(50, meanTransition + 85), semanticRole: "polymorph-solvus-upper" },
+      { type: "curve", startRoleId: "polymorph-left", endRoleId: "polymorph-right", recommendedControl: point(50, meanTransition - 85), semanticRole: "polymorph-solvus-lower" },
+    ],
+    invariants: [],
+    expectedFields: [],
+  };
+  solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
+    if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
+    if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "liquid-parent", phases: ["L", "gamma"] };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3")) return { role: "polymorph-coexistence", phases: ["gamma", "delta"] };
+    if (boundaries.has("frame-bottom")) return { role: "low-temperature-polymorph", phases: ["delta"], texture: "partial-solubility" };
+    return { role: "high-temperature-polymorph", phases: ["gamma"], texture: "partial-solubility" };
+  }, 5);
+  const inventory: PhaseDefinition[] = [
+    { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
+    { id: "gamma", symbol: "α", name: "High-temperature solid solution", kind: "terminal-solid", required: true, compositionGroupId: "polymorph" },
+    { id: "delta", symbol: "β", name: "Low-temperature solid solution", kind: "terminal-solid", required: true, compositionGroupId: "polymorph" },
+  ];
+  return { seed, difficulty, family: "subsolidus-polymorph", solution, puzzle: puzzleFrom(seed, difficulty, "Subsolidus polymorphism in a complete solid solution", solution, [], inventory) };
+}
+
+function generateSupersolidusPolymorph(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
+  const random = randomForSeed(seed ^ 0x73a1f9);
+  const eutecticT = integer(random, 380, 470, 10);
+  const peritecticT = eutecticT + integer(random, 150, 220, 10);
+  const alphaEutX = integer(random, 10, 18);
+  const eutecticX = integer(random, alphaEutX + 8, 32);
+  const gammaEutX = integer(random, eutecticX + 10, 46);
+  const liquidPeritecticX = integer(random, gammaEutX + 2, 52);
+  const gammaPeritecticX = integer(random, liquidPeritecticX + 8, 64);
+  const betaPeritecticX = integer(random, gammaPeritecticX + 18, 88);
+  const aMelt = integer(random, peritecticT + 270, 1050, 10);
+  const bMelt = integer(random, peritecticT + 210, 1020, 10);
+  const solution: HiddenSolution = {
+    puzzleId: `${difficulty}-supersolidus-polymorph-peritectic-v1-${seed}`,
+    points: [
+      { roleId: "a-melt", point: point(0, aMelt) }, { roleId: "b-melt", point: point(100, bMelt) },
+      { roleId: "alpha-eutectic", point: point(alphaEutX, eutecticT) },
+      { roleId: "eutectic", point: point(eutecticX, eutecticT) },
+      { roleId: "gamma-eutectic", point: point(gammaEutX, eutecticT) },
+      { roleId: "liquid-peritectic", point: point(liquidPeritecticX, peritecticT) },
+      { roleId: "gamma-peritectic", point: point(gammaPeritecticX, peritecticT) },
+      { roleId: "beta-peritectic", point: point(betaPeritecticX, peritecticT) },
+      { roleId: "alpha-low", point: point(Math.max(2, alphaEutX - 8), 0) },
+      { roleId: "gamma-left-low", point: point(gammaEutX - 6, 0) },
+      { roleId: "gamma-right-low", point: point(gammaPeritecticX + 6, 0) },
+      { roleId: "beta-low", point: point(Math.min(96, betaPeritecticX + 7), 0) },
+    ],
+    curves: [
+      { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(eutecticX, eutecticT), point(0, aMelt)), semanticRole: "liquidus-alpha" },
+      { type: "curve", startRoleId: "eutectic", endRoleId: "liquid-peritectic", recommendedControl: bowedControl(point(eutecticX, eutecticT), point(liquidPeritecticX, peritecticT), .72), semanticRole: "liquidus-gamma" },
+      { type: "curve", startRoleId: "liquid-peritectic", endRoleId: "b-melt", recommendedControl: bowedControl(point(liquidPeritecticX, peritecticT), point(100, bMelt)), semanticRole: "liquidus-beta" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "alpha-eutectic", recommendedControl: bowedControl(point(alphaEutX, eutecticT), point(0, aMelt), .7), semanticRole: "alpha-solidus" },
+      { type: "curve", startRoleId: "gamma-eutectic", endRoleId: "gamma-peritectic", recommendedControl: point((gammaEutX + gammaPeritecticX) / 2, (eutecticT + peritecticT) / 2), semanticRole: "gamma-solidus" },
+      { type: "curve", startRoleId: "b-melt", endRoleId: "beta-peritectic", recommendedControl: bowedControl(point(betaPeritecticX, peritecticT), point(100, bMelt), .7), semanticRole: "beta-solidus" },
+      { type: "curve", startRoleId: "alpha-low", endRoleId: "alpha-eutectic", recommendedControl: point(alphaEutX * .5, eutecticT * .5), semanticRole: "alpha-solvus" },
+      { type: "curve", startRoleId: "gamma-left-low", endRoleId: "gamma-eutectic", recommendedControl: point(gammaEutX - 3, eutecticT * .5), semanticRole: "gamma-solvus-left" },
+      { type: "curve", startRoleId: "gamma-peritectic", endRoleId: "gamma-right-low", recommendedControl: point(gammaPeritecticX + 3, peritecticT * .5), semanticRole: "gamma-solvus-right" },
+      { type: "curve", startRoleId: "beta-peritectic", endRoleId: "beta-low", recommendedControl: point((betaPeritecticX + Math.min(96, betaPeritecticX + 7)) / 2, peritecticT * .5), semanticRole: "beta-solvus" },
+    ],
+    invariants: [
+      { type: "invariant-horizontal", startRoleId: "alpha-eutectic", endRoleId: "gamma-eutectic", interiorRoleIds: ["eutectic"], temperatureCelsius: eutecticT, expectedAssemblage: ["L", "alpha", "gamma"], reactionType: "eutectic" },
+      { type: "invariant-horizontal", startRoleId: "liquid-peritectic", endRoleId: "beta-peritectic", interiorRoleIds: ["gamma-peritectic"], temperatureCelsius: peritecticT, expectedAssemblage: ["L", "gamma", "delta"], reactionType: "peritectic" },
+    ],
+    expectedFields: [],
+  };
+  solution.expectedFields = deriveExpectedFields(solution, (_label, boundaries) => {
+    if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
+    if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:3")) return { role: "liquid-alpha", phases: ["L", "alpha"] };
+    if (boundaries.has("generated-curve:1") && boundaries.has("generated-curve:4")) return { role: "liquid-low-polymorph", phases: ["L", "gamma"] };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:5")) return { role: "liquid-high-polymorph", phases: ["L", "delta"] };
+    if (boundaries.has("generated-curve:3") && boundaries.has("generated-curve:6")) return { role: "alpha", phases: ["alpha"], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:6") && boundaries.has("generated-curve:7")) return { role: "alpha-low-polymorph", phases: ["alpha", "gamma"] };
+    if (boundaries.has("generated-curve:7") && boundaries.has("generated-curve:8")) return { role: "low-polymorph", phases: ["gamma"], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:8") && boundaries.has("generated-curve:9")) return { role: "polymorph-coexistence", phases: ["gamma", "delta"] };
+    return { role: "high-polymorph", phases: ["delta"], texture: "partial-solubility" };
+  }, 9);
+  const inventory: PhaseDefinition[] = [
+    { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
+    { id: "alpha", symbol: "α", name: "Terminal solid solution", kind: "terminal-solid", required: true },
+    { id: "gamma", symbol: "γ", name: "Low-temperature solid-solution polymorph", kind: "terminal-solid", required: true, compositionGroupId: "polymorph" },
+    { id: "delta", symbol: "γ′", name: "High-temperature solid-solution polymorph", kind: "terminal-solid", required: true, compositionGroupId: "polymorph" },
+  ];
+  return { seed, difficulty, family: "supersolidus-polymorph", solution, puzzle: puzzleFrom(seed, difficulty, "Supersolidus polymorphism with a peritectic", solution, requiredInvariantsFor(solution), inventory) };
+}
+
+function generateSuperlatticeSolution(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
+  const random = randomForSeed(seed ^ 0x29c6e3);
+  const aMelt = integer(random, 930, 1040, 10);
+  const bMelt = integer(random, 900, 1020, 10);
+  const leftOrderX = integer(random, 20, 32);
+  const rightOrderX = integer(random, 68, 80);
+  const criticalX = integer(random, leftOrderX + 14, rightOrderX - 14);
+  const orderT = integer(random, 300, 440, 10);
+  const solution: HiddenSolution = {
+    puzzleId: `${difficulty}-superlattice-complete-solution-v1-${seed}`,
+    points: [
+      { roleId: "a-melt", point: point(0, aMelt) }, { roleId: "b-melt", point: point(100, bMelt) },
+      { roleId: "order-left", point: point(leftOrderX, 0) },
+      { roleId: "order-critical", point: point(criticalX, orderT) },
+      { roleId: "order-right", point: point(rightOrderX, 0) },
+    ],
+    curves: [
+      { type: "curve", startRoleId: "a-melt", endRoleId: "b-melt", recommendedControl: point(50, Math.min(1080, Math.max(aMelt, bMelt) + 70)), semanticRole: "complete-solution-liquidus" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "b-melt", recommendedControl: point(50, Math.min(aMelt, bMelt) - 190), semanticRole: "complete-solution-solidus" },
+      { type: "curve", startRoleId: "order-left", endRoleId: "order-critical", recommendedControl: bowedControl(point(leftOrderX, 0), point(criticalX, orderT), 1, .32), semanticRole: "superlattice-left" },
+      { type: "curve", startRoleId: "order-critical", endRoleId: "order-right", recommendedControl: bowedControl(point(rightOrderX, 0), point(criticalX, orderT), 1, .32), semanticRole: "superlattice-right" },
+    ],
+    invariants: [],
+    expectedFields: [],
+  };
+  solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
+    if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
+    if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "liquid-disordered-solution", phases: ["L", "gamma"] };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3") && label.temperatureCelsius < orderT) return { role: "ordered-superlattice", phases: ["delta"], texture: "partial-solubility" };
+    return { role: "disordered-solid-solution", phases: ["gamma"], texture: "partial-solubility" };
+  }, 4);
+  const inventory: PhaseDefinition[] = [
+    { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
+    { id: "gamma", symbol: "α", name: "Disordered solid solution", kind: "terminal-solid", required: true, compositionGroupId: "ordered-solution" },
+    { id: "delta", symbol: "α′", name: "Ordered superlattice", kind: "terminal-solid", required: true, compositionGroupId: "ordered-solution" },
+  ];
+  return { seed, difficulty, family: "superlattice", solution, puzzle: puzzleFrom(seed, difficulty, "Superlattice ordering in a complete solid solution", solution, [], inventory) };
 }
 
 function generatePeritectoidSystem(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
@@ -808,6 +840,7 @@ function generatePeritectoidSystem(seed: number, difficulty: Difficulty = "norma
 }
 
 function annotateRound(round: GeneratedRound): GeneratedRound {
+  assertPhaseEquilibria(round.puzzle, round.solution);
   const { points, geometry } = generatedGeometry(round.solution);
   const cells = extractFaces(points, geometry);
   const minimumArea = Math.min(...cells.map((cell) => Math.abs(polygonArea(cell.polygon))));
@@ -831,7 +864,7 @@ function annotateRound(round: GeneratedRound): GeneratedRound {
     && (item.roleId === "critical" || item.roleId === "dome-peak" || item.roleId === "order-critical"),
   );
   const reactionTypes = new Set(round.solution.invariants.map((item) => item.reactionType));
-  if (["superlattice", "liquid-spinodal"].includes(round.family)) reactionTypes.add(round.family);
+  if (["liquid-spinodal", "subsolidus-polymorph", "supersolidus-polymorph", "superlattice"].includes(round.family)) reactionTypes.add(round.family);
   return {
     ...round,
     reactionTypes: [...reactionTypes],
@@ -845,32 +878,36 @@ export function generateRound(rawSeed: number, difficulty: Difficulty = "normal"
   const seed = rawSeed >>> 0;
   let round: GeneratedRound;
   if (difficulty === "easy") {
-    const family = seed % 5;
+    const family = seed % 6;
     if (family === 0) round = generateCompound(seed, "easy");
     else if (family === 1) round = generateIncongruentCompound(seed, "easy");
-    else if (family === 2) round = generateCompoundPolymorph(seed, "easy", false);
+    else if (family === 2) round = generateLimited(seed, "easy");
     else if (family === 3) round = generateSimple(seed);
-    else round = generatePeritectoidSystem(seed, "easy");
+    else if (family === 4) round = generatePeritectoidSystem(seed, "easy");
+    else round = generateSubsolidusPolymorph(seed, "easy");
   } else if (difficulty === "hard") {
-    const family = seed % 10;
+    const family = seed % 12;
     if (family === 0) round = generateTripleEutectic(seed);
     else if (family === 1) round = generateImmiscibleHard(seed, "syntectic");
     else if (family === 2) round = generateMonotectic(seed, "hard");
     else if (family === 3) round = generateImmiscibleHard(seed, "liquid-spinodal");
     else if (family === 4) round = generateCompound(seed, "hard");
     else if (family === 5) round = generateIncongruentCompound(seed, "hard");
-    else if (family === 6) round = generateCompoundPolymorph(seed, "hard", false);
+    else if (family === 6) round = generateLimited(seed, "hard");
     else if (family === 7) round = generatePeritectoidSystem(seed, "hard");
-    else if (family === 8) round = generateCompoundPolymorph(seed, "hard", true);
-    else round = generateSuperlatticeCompound(seed, "hard");
+    else if (family === 8) round = generateSubsolidusPolymorph(seed, "hard");
+    else if (family === 9) round = generateSupersolidusPolymorph(seed, "hard");
+    else if (family === 10) round = generateSuperlatticeSolution(seed, "hard");
+    else round = generateSimple(seed);
   } else {
-    const familyIndex = seed % 6;
+    const familyIndex = seed % 7;
     if (familyIndex === 0) round = generateCompound(seed, "normal");
     else if (familyIndex === 1) round = generateIncongruentCompound(seed, "normal");
-    else if (familyIndex === 2) round = generateCompoundPolymorph(seed, "normal", false);
+    else if (familyIndex === 2) round = generateLimited(seed);
     else if (familyIndex === 3) round = generatePeritectoidSystem(seed, "normal");
-    else if (familyIndex === 4) round = generateCompoundPolymorph(seed, "normal", true);
-    else round = generateSuperlatticeCompound(seed);
+    else if (familyIndex === 4) round = generateSubsolidusPolymorph(seed);
+    else if (familyIndex === 5) round = generateSupersolidusPolymorph(seed);
+    else round = generateSuperlatticeSolution(seed);
   }
   return annotateRound(round);
 }

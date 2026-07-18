@@ -59,6 +59,8 @@ export function createLabelingState(
       endPointId: `point:${curve.endRoleId}`,
       control: curve.recommendedControl,
       createdBy: "generated" as const,
+      semanticRole: curve.semanticRole,
+      fieldBoundary: curve.fieldBoundary,
     })),
     ...solution.invariants.map((invariant, index) => ({
       type: "invariant-horizontal" as const,

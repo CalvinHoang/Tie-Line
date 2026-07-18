@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { constrainPoint, distance, formatCoordinate, FRAME, logicalToSvg, roleById, svgToLogical, VIEWBOX } from "../domain/coordinates";
-import { geometryPolyline, hasIllegalIntersection, pointInPolygon, unorderedPairKey } from "../domain/geometry";
+import { geometryPolyline, hasIllegalIntersection, pointInPolygon, sameLogicalPoint, unorderedPairKey } from "../domain/geometry";
 import { fieldLabelPlacement } from "./label-placement";
 import type {
   ConstructionState,
@@ -231,6 +231,27 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     .filter((cell) => cell.phaseOrder.length > 0)
     .map((cell) => [cell.id, fieldLabelPlacement(cell.polygon, Math.max(2, cell.phaseOrder.length))])), [state.cells]);
 
+  const fieldTextures = useMemo(() => new Map(state.cells.flatMap((cell) => {
+    const expected = puzzle.expectedFields.find((field) => sameLogicalPoint(field.witnessPoint, cell.labelPoint));
+    return expected?.texture ? [[cell.id, expected.texture] as const] : [];
+  })), [puzzle.expectedFields, state.cells]);
+
+  const spinodalOverlayPath = useMemo(() => {
+    const left = state.geometry.find((item) => item.type === "curve" && item.semanticRole === "spinodal-left");
+    const right = state.geometry.find((item) => item.type === "curve" && item.semanticRole === "spinodal-right");
+    if (!left || left.type !== "curve" || !right || right.type !== "curve") return undefined;
+    const leftStart = state.points.find((point) => point.id === left.startPointId)?.point;
+    const peak = state.points.find((point) => point.id === left.endPointId)?.point;
+    const rightEnd = state.points.find((point) => point.id === right.endPointId)?.point;
+    if (!leftStart || !peak || !rightEnd) return undefined;
+    const a = logicalToSvg(leftStart);
+    const lc = logicalToSvg(left.control);
+    const p = logicalToSvg(peak);
+    const rc = logicalToSvg(right.control);
+    const b = logicalToSvg(rightEnd);
+    return `M${a.x} ${a.y} Q${lc.x} ${lc.y} ${p.x} ${p.y} Q${rc.x} ${rc.y} ${b.x} ${b.y} Z`;
+  }, [state.geometry, state.points]);
+
   const intermediateCompositionLabels = useMemo(() => puzzle.intermediateCompositions.map((composition) => ({
     ...composition,
     x: logicalToSvg({ compositionBPercent: composition.compositionBPercent, temperatureCelsius: 0 }).x,
@@ -254,6 +275,14 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       onPointerUp={pointerUp}
       onPointerCancel={pointerUp}
     >
+      <defs>
+        <pattern id="partial-solubility-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+          <line x1="0" y1="0" x2="0" y2="9" />
+        </pattern>
+        <pattern id="unstable-spinodal-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)">
+          <line x1="0" y1="0" x2="0" y2="8" />
+        </pattern>
+      </defs>
       <g transform={`translate(${state.viewport.translateX} ${state.viewport.translateY}) scale(${state.viewport.scale})`}>
         <rect className="board-surface" x={FRAME.left} y={FRAME.top} width={FRAME.right - FRAME.left} height={FRAME.bottom - FRAME.top} />
         {state.activeTool === "point" && !state.solved && (
@@ -268,6 +297,14 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
             })}
           </g>
         )}
+
+        {state.cells.map((cell) => {
+          const texture = fieldTextures.get(cell.id);
+          if (!texture) return null;
+          return <path key={`texture:${cell.id}`} className={`field-texture texture-${texture}`} d={`${logicalPath(cell.polygon)} Z`} />;
+        })}
+
+        {spinodalOverlayPath && <path className="stability-overlay spinodal-unstable-overlay" d={spinodalOverlayPath} />}
 
         {state.cells.map((cell) => {
           const d = `${logicalPath(cell.polygon)} Z`;
@@ -298,7 +335,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
               }
               }}
             />
-            <path pathLength={1} className={`geometry-line ${state.selectedElementId === curve.id ? "is-selected" : ""}`} d={d} />
+            <path pathLength={1} className={`geometry-line ${curve.fieldBoundary === false ? "is-stability-guide" : ""} ${state.selectedElementId === curve.id ? "is-selected" : ""}`} d={d} />
           </g>
         ))}
 

@@ -8,7 +8,7 @@ export interface LogicalPoint {
   temperatureCelsius: number;
 }
 
-export type PhaseKind = "liquid" | "terminal-solid" | "line-compound";
+export type PhaseKind = "liquid" | "terminal-solid" | "line-compound" | "intermediate-solid-solution";
 
 export interface PhaseDefinition {
   id: PhaseId;
@@ -54,6 +54,8 @@ export interface QuadraticCurveGeometry {
   endPointId: string;
   control: LogicalPoint;
   createdBy: "player" | "generated";
+  semanticRole?: string;
+  fieldBoundary?: boolean;
 }
 
 export interface InvariantHorizontalGeometry {
@@ -71,6 +73,8 @@ export type PlayerGeometry = QuadraticCurveGeometry | InvariantHorizontalGeometr
 
 export interface OrientedBoundaryRef {
   geometryId: GeometryId | "frame-left" | "frame-right" | "frame-top" | "frame-bottom";
+  /** Exact planar-graph segment. Geometry ids alone are ambiguous for horizontals. */
+  segmentId?: string;
   direction: "forward" | "reverse";
 }
 
@@ -109,6 +113,7 @@ export interface ExpectedFieldSpec {
   role: string;
   expectedAssemblage: PhaseId[];
   witnessPoint: LogicalPoint;
+  texture?: "partial-solubility";
 }
 
 export interface PuzzleDefinition {
@@ -143,6 +148,7 @@ export interface SolutionCurve {
   endRoleId: PointRoleId;
   recommendedControl: LogicalPoint;
   semanticRole?: string;
+  fieldBoundary?: boolean;
 }
 
 export interface HiddenInvariantSolution {

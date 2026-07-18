@@ -148,6 +148,11 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .field-target.field-L.field-alpha { fill: rgb(86 212 210 / 8%); }
 .field-target.field-L.field-beta { fill: rgb(176 174 224 / 7%); }
 .field-target.field-alpha.field-beta { fill: rgb(224 185 164 / 6%); }
+.field-texture, .stability-overlay { pointer-events: none; }
+.field-texture.texture-partial-solubility { fill: url(#partial-solubility-hatch); opacity: .65; }
+#partial-solubility-hatch line { stroke: #7d858b; stroke-width: 1.1; opacity: .34; }
+.stability-overlay.spinodal-unstable-overlay { fill: url(#unstable-spinodal-hatch); opacity: .8; }
+#unstable-spinodal-hatch line { stroke: #929aa0; stroke-width: 1.2; opacity: .42; }
 .geometry-line {
   fill: none;
   stroke: #dce1e4;
@@ -161,6 +166,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   transition: stroke 180ms ease, stroke-width 180ms ease, opacity 220ms ease;
 }
 .geometry-line.is-selected { stroke: var(--accent); stroke-width: 4; }
+.geometry-line.is-stability-guide { stroke: #929aa0; stroke-width: 2; stroke-dasharray: 7 6; opacity: .9; }
 .invariant-line { stroke: var(--accent); stroke-width: 2.8; }
 .geometry-hit { fill: none; stroke: transparent; stroke-width: 38; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
 .point-hit { fill: transparent; pointer-events: all; cursor: pointer; }
