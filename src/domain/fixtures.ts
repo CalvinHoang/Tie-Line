@@ -35,12 +35,12 @@ export const goldenPuzzle: PuzzleDefinition = {
   ],
   permittedTools: ["point", "curve", "horizontal", "label", "select", "erase"],
   requiredCurves: [
-    { startRoleId: "a-melt", endRoleId: "eutectic", semanticRole: "liquidus-left" },
-    { startRoleId: "b-melt", endRoleId: "eutectic", semanticRole: "liquidus-right" },
-    { startRoleId: "a-melt", endRoleId: "alpha-eut", semanticRole: "solidus-left" },
-    { startRoleId: "b-melt", endRoleId: "beta-eut", semanticRole: "solidus-right" },
-    { startRoleId: "alpha-low", endRoleId: "alpha-eut", semanticRole: "solvus-left" },
-    { startRoleId: "beta-low", endRoleId: "beta-eut", semanticRole: "solvus-right" },
+    { startRoleId: "a-melt", endRoleId: "eutectic", semanticRole: "liquidus-left", boundaryKind: "liquidus" },
+    { startRoleId: "b-melt", endRoleId: "eutectic", semanticRole: "liquidus-right", boundaryKind: "liquidus" },
+    { startRoleId: "a-melt", endRoleId: "alpha-eut", semanticRole: "solidus-left", boundaryKind: "solidus" },
+    { startRoleId: "b-melt", endRoleId: "beta-eut", semanticRole: "solidus-right", boundaryKind: "solidus" },
+    { startRoleId: "alpha-low", endRoleId: "alpha-eut", semanticRole: "solvus-left", boundaryKind: "solvus" },
+    { startRoleId: "beta-low", endRoleId: "beta-eut", semanticRole: "solvus-right", boundaryKind: "solvus" },
   ],
   requiredInvariants: [{
     startRoleId: "alpha-eut",

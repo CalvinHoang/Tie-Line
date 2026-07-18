@@ -10,13 +10,38 @@ export interface LogicalPoint {
 
 export type PhaseKind = "liquid" | "terminal-solid" | "line-compound" | "intermediate-solid-solution";
 
+export type ReactionType =
+  | "eutectic"
+  | "eutectoid"
+  | "peritectic"
+  | "peritectoid"
+  | "monotectic"
+  | "monotectoid"
+  | "syntectic"
+  | "metatectic";
+
+export type BoundaryKind =
+  | "liquidus"
+  | "solidus"
+  | "solvus"
+  | "miscibility-gap"
+  | "line-compound"
+  | "polymorph-boundary"
+  | "ordering-boundary"
+  | "stability-guide"
+  | "phase-boundary";
+
 export interface PhaseDefinition {
   id: PhaseId;
   symbol: string;
   name: string;
   kind: PhaseKind;
   required: boolean;
-  compositionGroupId?: string;
+  /** Structural/solution family shared by polymorphs or ordered variants. */
+  phaseFamilyId?: string;
+  /** Fixed stoichiometric site. Only phases at this exact composition share it. */
+  compositionSiteId?: string;
+  fixedCompositionBPercent?: number;
 }
 
 export interface IntermediateCompositionDefinition {
@@ -54,6 +79,8 @@ export interface QuadraticCurveGeometry {
   endPointId: string;
   control: LogicalPoint;
   createdBy: "player" | "generated";
+  boundaryKind?: BoundaryKind;
+  compositionSiteId?: string;
   semanticRole?: string;
   fieldBoundary?: boolean;
 }
@@ -99,6 +126,8 @@ export interface RequiredCurveSpec {
   startRoleId: PointRoleId;
   endRoleId: PointRoleId;
   semanticRole: string;
+  boundaryKind: BoundaryKind;
+  compositionSiteId?: string;
 }
 
 export interface RequiredInvariantSpec {
@@ -106,7 +135,10 @@ export interface RequiredInvariantSpec {
   endRoleId: PointRoleId;
   interiorRoleIds: PointRoleId[];
   expectedAssemblage: PhaseId[];
-  reactionType: string;
+  reactionType: ReactionType;
+  reactantPhaseIds?: PhaseId[];
+  productPhaseIds?: PhaseId[];
+  phaseCompositionRoleIds?: Record<PhaseId, PointRoleId>;
 }
 
 export interface ExpectedFieldSpec {
@@ -148,6 +180,8 @@ export interface SolutionCurve {
   endRoleId: PointRoleId;
   recommendedControl: LogicalPoint;
   semanticRole?: string;
+  boundaryKind?: BoundaryKind;
+  compositionSiteId?: string;
   fieldBoundary?: boolean;
 }
 
@@ -158,7 +192,10 @@ export interface HiddenInvariantSolution {
   interiorRoleIds: PointRoleId[];
   temperatureCelsius: number;
   expectedAssemblage: PhaseId[];
-  reactionType: string;
+  reactionType: ReactionType;
+  reactantPhaseIds?: PhaseId[];
+  productPhaseIds?: PhaseId[];
+  phaseCompositionRoleIds?: Record<PhaseId, PointRoleId>;
 }
 
 export interface HiddenSolution {
