@@ -65,6 +65,15 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <text x="30" y="90">α₂</text>
       <text x="124" y="90">β</text>
     </>,
+    metatectic: <>
+      <path d="M16 22Q48 30 76 52M144 26Q108 34 76 52"/>
+      <path d="M76 52Q58 66 46 96M76 52Q102 68 118 96"/>
+      <path className="accent" d="M34 62H122"/>
+      <circle cx="76" cy="62" r="3"/>
+      <text x="76" y="42">β</text>
+      <text x="34" y="88">α</text>
+      <text x="112" y="88">L</text>
+    </>,
     syntectic: <>
       <path d="M56 44Q62 16 80 14Q98 16 104 44"/>
       <path className="accent" d="M56 44H104"/>

@@ -60,6 +60,8 @@ export function createLabelingState(
       control: curve.recommendedControl,
       createdBy: "generated" as const,
       semanticRole: curve.semanticRole,
+      boundaryKind: curve.boundaryKind,
+      compositionSiteId: curve.compositionSiteId,
       fieldBoundary: curve.fieldBoundary,
     })),
     ...solution.invariants.map((invariant, index) => ({
