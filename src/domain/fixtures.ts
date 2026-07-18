@@ -8,6 +8,8 @@ export const goldenPuzzle: PuzzleDefinition = {
   compositionMaxPercentB: 100,
   temperatureMinCelsius: 0,
   temperatureMaxCelsius: 1100,
+  endMemberLabels: { left: "A", right: "B" },
+  intermediateCompositions: [],
   phases: [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
     { id: "alpha", symbol: "α", name: "Alpha", kind: "terminal-solid", required: true },

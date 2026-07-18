@@ -14,11 +14,9 @@ import {
   pauseTimer,
   placeOrMovePoint,
   removePhaseFromCell,
-  removePhaseFromInvariant,
   resumeTimer,
   setTool,
   togglePhaseInCell,
-  togglePhaseInInvariant,
   updateGeometry,
 } from "../editor/state";
 import {
@@ -43,9 +41,9 @@ import { ConceptDiagram } from "../ui/ConceptDiagram";
 type Panel = "rules" | "statistics" | "settings";
 
 const DIFFICULTIES: Array<{ id: Difficulty; label: string; detail: string }> = [
-  { id: "easy", label: "Easy", detail: "1–2 critical points · 1 intermediate phase" },
-  { id: "normal", label: "Normal", detail: "Expanded transitions · 1 intermediate phase" },
-  { id: "hard", label: "Hard", detail: "3 critical points · up to 2 intermediate phases" },
+  { id: "easy", label: "Easy", detail: "Complete systems · simpler invariants" },
+  { id: "normal", label: "Normal", detail: "Complete systems · expanded transformations" },
+  { id: "hard", label: "Hard", detail: "Immiscibility · spinodal · multi-compound" },
 ];
 
 const FOUNDATIONS = [
@@ -63,8 +61,9 @@ const FOUNDATIONS = [
     id: "melting",
     title: "Melting behaviour",
     sketch: "melting",
-    summary: "Congruent melting preserves composition; incongruent melting produces a solid and liquid of different compositions.",
+    summary: "A complete diagram starts in one homogeneous liquid field; melting behaviour determines how the solid fields connect below it.",
     points: [
+      "The complete high-temperature edge must belong to one connected single-liquid field; a solid-only top edge is valid only in an explicitly cropped subsolidus section.",
       "A congruently melting phase sits inside its own primary crystallisation field.",
       "An incongruently melting phase lies outside its own field and decomposes at a peritectic temperature.",
     ],
@@ -312,9 +311,6 @@ export function App() {
   const revealSolution = () => {
     commit((current) => ({
       ...pauseTimer(current),
-      geometry: current.geometry.map((item) => item.type === "invariant-horizontal"
-        ? { ...item, phaseOrder: solution.invariants.find((expected) => expected.temperatureCelsius === item.temperatureCelsius)?.expectedAssemblage ?? [] }
-        : item),
       cells: current.cells.map((cell) => ({ ...cell, phaseOrder: (solution.expectedFields.find((field) => sameLogicalPoint(field.witnessPoint, cell.labelPoint)) ?? solution.expectedFields.find((field) => pointInPolygon(field.witnessPoint, cell.polygon)))?.expectedAssemblage ?? [] })),
       revealed: true,
       solved: false,
@@ -375,8 +371,6 @@ export function App() {
               onUpdateGeometry={(value) => commit((current) => updateGeometry(current, value))}
               onTogglePhaseInCell={(cellId, phaseId) => commit((current) => togglePhaseInCell(current, cellId, phaseId, puzzle.phases.map((phase) => phase.id)))}
               onRemovePhaseFromCell={(cellId, phaseId) => commit((current) => removePhaseFromCell(current, cellId, phaseId))}
-              onTogglePhaseInInvariant={(geometryId, phaseId) => commit((current) => togglePhaseInInvariant(current, geometryId, phaseId, puzzle.phases.map((phase) => phase.id)))}
-              onRemovePhaseFromInvariant={(geometryId, phaseId) => commit((current) => removePhaseFromInvariant(current, geometryId, phaseId))}
               onDeleteGeometry={(geometryId) => commit((current) => deleteGeometry(current, geometryId))}
               onDeletePoint={(pointId) => commit((current) => deletePoint(current, pointId))}
               onSelectElement={(selectedElementId) => updateTransient((current) => ({ ...current, selectedElementId }))}

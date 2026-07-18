@@ -30,8 +30,6 @@ interface DiagramCanvasProps {
   onUpdateGeometry: (geometry: PlayerGeometry) => void;
   onTogglePhaseInCell: (cellId: string, phaseId: PhaseId) => void;
   onRemovePhaseFromCell: (cellId: string, phaseId: PhaseId) => void;
-  onTogglePhaseInInvariant: (geometryId: string, phaseId: PhaseId) => void;
-  onRemovePhaseFromInvariant: (geometryId: string, phaseId: PhaseId) => void;
   onDeleteGeometry: (geometryId: string) => void;
   onDeletePoint: (pointId: string) => void;
   onSelectElement: (elementId?: string) => void;
@@ -233,6 +231,11 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     .filter((cell) => cell.phaseOrder.length > 0)
     .map((cell) => [cell.id, fieldLabelPlacement(cell.polygon, Math.max(2, cell.phaseOrder.length))])), [state.cells]);
 
+  const intermediateCompositionLabels = useMemo(() => puzzle.intermediateCompositions.map((composition) => ({
+    ...composition,
+    x: logicalToSvg({ compositionBPercent: composition.compositionBPercent, temperatureCelsius: 0 }).x,
+  })), [puzzle.intermediateCompositions]);
+
   const previewPoint = gesture?.kind === "point" || gesture?.kind === "move-point" ? gesture.preview
     : props.externalPreview?.kind === "point" ? props.externalPreview.point : undefined;
   const selectedCurve = state.geometry.find((item) => item.id === state.selectedElementId && item.type === "curve" && item.createdBy === "player") as QuadraticCurveGeometry | undefined;
@@ -306,29 +309,18 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
           if (!start || !end) return null;
           return (
             <g key={horizontal.id}>
-              <line className="geometry-hit" x1={start.x} y1={start.y} x2={end.x} y2={end.y} onPointerDown={(event) => {
+              <line className="geometry-hit" style={{ pointerEvents: horizontal.createdBy === "player" && (state.activeTool === "select" || state.activeTool === "erase") ? "stroke" : "none" }} x1={start.x} y1={start.y} x2={end.x} y2={end.y} onPointerDown={(event) => {
                 if (state.solved) return;
-                event.stopPropagation();
-                if (state.activeTool === "label" && state.activePhaseId) {
-                  const phaseId = state.activePhaseId;
-                  confirmTarget(event, horizontal.id, phaseId, horizontal.phaseOrder.includes(phaseId));
-                  props.onTogglePhaseInInvariant(horizontal.id, phaseId);
+                if (horizontal.createdBy === "player" && state.activeTool === "erase") {
+                  event.stopPropagation();
+                  props.onDeleteGeometry(horizontal.id);
                 }
-                if (horizontal.createdBy === "player" && state.activeTool === "erase") props.onDeleteGeometry(horizontal.id);
-                if (horizontal.createdBy === "player" && state.activeTool === "select") props.onSelectElement(horizontal.id);
+                if (horizontal.createdBy === "player" && state.activeTool === "select") {
+                  event.stopPropagation();
+                  props.onSelectElement(horizontal.id);
+                }
               }} />
-              <line pathLength={1} className={`geometry-line invariant-line ${targetFeedback?.targetId === horizontal.id ? "is-confirmed" : ""} ${state.selectedElementId === horizontal.id ? "is-selected" : ""}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />
-              {horizontal.phaseOrder.length > 0 && (
-                <PhaseLabel
-                  x={(start.x + end.x) / 2}
-                  y={start.y + 28}
-                  phases={horizontal.phaseOrder}
-                  puzzle={puzzle}
-                  onRemove={state.activeTool === "erase"
-                    ? (phaseId) => props.onRemovePhaseFromInvariant(horizontal.id, phaseId)
-                    : undefined}
-                />
-              )}
+              <line pathLength={1} className={`geometry-line invariant-line ${state.selectedElementId === horizontal.id ? "is-selected" : ""}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />
             </g>
           );
         })}
@@ -433,8 +425,18 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
 
         <path className="board-frame" d={`M${FRAME.left} ${FRAME.top} V${FRAME.bottom} H${FRAME.right} V${FRAME.top}`} />
         <text className="axis-label axis-t" x={FRAME.left - 42} y={(FRAME.top + FRAME.bottom) / 2}>T</text>
-        <text className="axis-label" x={FRAME.left} y={FRAME.bottom + 26} textAnchor="middle">A</text>
-        <text className="axis-label" x={FRAME.right} y={FRAME.bottom + 26} textAnchor="middle">B</text>
+        <text className="axis-label" x={FRAME.left} y={FRAME.bottom + 26} textAnchor="middle">{puzzle.endMemberLabels.left}</text>
+        {intermediateCompositionLabels.map((composition) => <text
+          key={`intermediate-composition:${composition.id}`}
+          className="axis-label intermediate-composition-label"
+          data-composition={composition.id}
+          data-phases={composition.phaseIds.join(" ")}
+          x={composition.x}
+          y={FRAME.bottom + 26}
+          textAnchor="middle"
+          aria-label={`${composition.label} intermediate composition`}
+        >{composition.label}</text>)}
+        <text className="axis-label" x={FRAME.right} y={FRAME.bottom + 26} textAnchor="middle">{puzzle.endMemberLabels.right}</text>
       </g>
     </svg>
   );

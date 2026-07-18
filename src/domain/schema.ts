@@ -16,6 +16,14 @@ export interface PhaseDefinition {
   name: string;
   kind: PhaseKind;
   required: boolean;
+  compositionGroupId?: string;
+}
+
+export interface IntermediateCompositionDefinition {
+  id: string;
+  label: string;
+  compositionBPercent: number;
+  phaseIds: PhaseId[];
 }
 
 export type PlacementConstraint =
@@ -111,6 +119,8 @@ export interface PuzzleDefinition {
   compositionMaxPercentB: number;
   temperatureMinCelsius: number;
   temperatureMaxCelsius: number;
+  endMemberLabels: { left: string; right: string };
+  intermediateCompositions: IntermediateCompositionDefinition[];
   phases: PhaseDefinition[];
   pointRoles: PointRoleDefinition[];
   instructions: NumericInstruction[];
@@ -175,7 +185,7 @@ export interface PuzzleMetrics {
 }
 
 export interface ConstructionState {
-  version: 1;
+  version: 2;
   puzzleId: string;
   points: PlayerPoint[];
   geometry: PlayerGeometry[];

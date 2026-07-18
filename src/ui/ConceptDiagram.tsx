@@ -55,6 +55,16 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <text x="87" y="38">2L</text>
       <text x="128" y="14">L</text>
     </>,
+    monotectoid: <>
+      <path d="M16 22Q48 34 78 62M144 26Q108 36 78 62"/>
+      <path className="accent" d="M24 62H136"/>
+      <path d="M78 62Q60 78 50 96M78 62Q98 78 108 96"/>
+      <path className="hatch" d="M66 34L90 34M70 46L86 46"/>
+      <circle cx="78" cy="62" r="3"/>
+      <text x="78" y="20">α₁</text>
+      <text x="30" y="90">α₂</text>
+      <text x="124" y="90">β</text>
+    </>,
     syntectic: <>
       <path d="M56 44Q62 16 80 14Q98 16 104 44"/>
       <path className="accent" d="M56 44H104"/>

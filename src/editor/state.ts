@@ -13,7 +13,7 @@ import type {
 
 export function createInitialState(puzzle: PuzzleDefinition, now = Date.now()): ConstructionState {
   return {
-    version: 1,
+    version: 2,
     puzzleId: puzzle.id,
     points: [],
     geometry: [],
@@ -212,37 +212,6 @@ export function togglePhaseInCell(state: ConstructionState, cellId: string, phas
   return cell.phaseOrder.includes(phaseId)
     ? removePhaseFromCell(state, cellId, phaseId)
     : addPhaseToCell(state, cellId, phaseId, preferredOrder);
-}
-
-export function addPhaseToInvariant(state: ConstructionState, geometryId: string, phaseId: PhaseId, preferredOrder: PhaseId[] = []): ConstructionState {
-  const invariant = state.geometry.find((geometry) => geometry.id === geometryId && geometry.type === "invariant-horizontal");
-  if (!invariant || invariant.type !== "invariant-horizontal" || invariant.phaseOrder.includes(phaseId)) return state;
-  return {
-    ...state,
-    geometry: state.geometry.map((geometry) => geometry.id === geometryId && geometry.type === "invariant-horizontal"
-      ? { ...geometry, phaseOrder: orderedAssemblage(geometry.phaseOrder, phaseId, preferredOrder) }
-      : geometry),
-  };
-}
-
-export function removePhaseFromInvariant(state: ConstructionState, geometryId: string, phaseId: PhaseId): ConstructionState {
-  const invariant = state.geometry.find((geometry) => geometry.id === geometryId && geometry.type === "invariant-horizontal");
-  if (!invariant || invariant.type !== "invariant-horizontal" || !invariant.phaseOrder.includes(phaseId)) return state;
-  return {
-    ...state,
-    geometry: state.geometry.map((geometry) => geometry.id === geometryId && geometry.type === "invariant-horizontal"
-      ? { ...geometry, phaseOrder: geometry.phaseOrder.filter((phase) => phase !== phaseId) }
-      : geometry),
-    metrics: { ...state.metrics, phaseDeleteCount: state.metrics.phaseDeleteCount + 1 },
-  };
-}
-
-export function togglePhaseInInvariant(state: ConstructionState, geometryId: string, phaseId: PhaseId, preferredOrder: PhaseId[] = []): ConstructionState {
-  const invariant = state.geometry.find((geometry) => geometry.id === geometryId && geometry.type === "invariant-horizontal");
-  if (!invariant || invariant.type !== "invariant-horizontal") return state;
-  return invariant.phaseOrder.includes(phaseId)
-    ? removePhaseFromInvariant(state, geometryId, phaseId)
-    : addPhaseToInvariant(state, geometryId, phaseId, preferredOrder);
 }
 
 export function setTool(state: ConstructionState, tool: ToolId): ConstructionState {

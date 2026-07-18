@@ -76,14 +76,6 @@ export function validateSubmit(
       return { status: "incorrect", violations: [violation("M-C5", "scientific", "One or more field assemblages are incorrect.", [cell.id])] };
     }
   }
-  for (const expected of solution.invariants) {
-    const horizontal = invariant.find((candidate) => unorderedPairKey(roleForPointId(candidate.startPointId), roleForPointId(candidate.endPointId))
-      === unorderedPairKey(expected.startRoleId, expected.endRoleId));
-    if (!horizontal || canonicalPhaseKey(horizontal.phaseOrder) !== canonicalPhaseKey(expected.expectedAssemblage)) {
-      return { status: !horizontal || horizontal.phaseOrder.length === 0 ? "incomplete" : "incorrect", violations: [violation("M-I2", "scientific", "An invariant assemblage is incomplete or incorrect.", horizontal ? [horizontal.id] : [])] };
-    }
-  }
-
   return { status: "solved", violations: [] };
 }
 

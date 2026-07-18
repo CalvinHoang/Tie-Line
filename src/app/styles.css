@@ -162,7 +162,6 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .geometry-line.is-selected { stroke: var(--accent); stroke-width: 4; }
 .invariant-line { stroke: var(--accent); stroke-width: 2.8; }
-.invariant-line.is-confirmed { animation: invariant-confirm 360ms var(--spring); }
 .geometry-hit { fill: none; stroke: transparent; stroke-width: 38; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
 .point-hit { fill: transparent; pointer-events: all; cursor: pointer; }
 .point-dot {
@@ -178,6 +177,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .point-mark .point-dot { opacity: 0; animation: none; }
 .point-mark.is-selected .point-dot { stroke: var(--accent); stroke-width: 4; }
 .point-mark.is-invalid .point-dot { stroke: var(--error); stroke-width: 5; }
+.intermediate-composition-label { font-family: "STIX Two Math", "Cambria Math", serif; font-size: 17px; fill: var(--ink); }
 .point-preview circle { fill: var(--surface); stroke: var(--accent); stroke-width: 3; vector-effect: non-scaling-stroke; }
 .point-preview line { stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .point-preview text { fill: var(--accent); font-size: 22px; font-weight: 700; paint-order: stroke; stroke: var(--surface); stroke-width: 6px; }

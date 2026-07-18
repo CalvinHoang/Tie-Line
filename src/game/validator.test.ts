@@ -29,7 +29,7 @@ function solvedState(): ConstructionState {
       endPointId: "point:beta-eut",
       interiorPointIds: ["point:eutectic"],
       temperatureCelsius: 700,
-      phaseOrder: ["beta", "L", "alpha"],
+      phaseOrder: [],
       createdBy: "player",
     },
   ];
@@ -45,7 +45,7 @@ describe("semantic submit validator", () => {
     expect(validateSubmit(createInitialState(goldenPuzzle), goldenPuzzle, goldenSolution).status).toBe("incomplete");
   });
 
-  it("accepts the golden topology regardless of phase insertion order", () => {
+  it("accepts field labels regardless of insertion order without invariant labels", () => {
     expect(validateSubmit(solvedState(), goldenPuzzle, goldenSolution)).toEqual({ status: "solved", violations: [] });
   });
 

@@ -24,8 +24,9 @@ The Playwright command requires its Chromium runtime (`npx playwright install ch
 
 ## Game features
 
-- three always-available difficulty grammars: Easy (1–2 critical points, one intermediate phase), Normal (expanded reactions, one intermediate phase), and Hard (three critical points, up to two intermediate phases);
-- seeded eutectic, peritectic, eutectoid, peritectoid, inverse-peritectic, subsolidus/supersolidus polymorphic, superlattice, monotectic, monotectoid, liquid/solid-spinodal, syntectic, and multi-compound topologies;
+- three always-available difficulty grammars: Easy (canonical invariants and simpler compound diagrams), Normal (expanded reactions and transformations), and Hard (immiscibility, spinodal, and multi-invariant topologies);
+- rule-derived formula markers identify intermediate compositions along the bottom axis (for example AB, A₂B, AB₂, or ABC), while Greek phase symbols remain hidden until the player labels a field; invariant horizontals remain visible construction features but are not answer targets;
+- seeded complete eutectic, compound, peritectic, peritectoid, subsolidus/supersolidus polymorphic, superlattice, monotectic, liquid-spinodal, syntectic, and multi-compound topologies;
 - complete, locked phase diagrams ready for labelling;
 - visible active timer and three scored submissions;
 - focused Label and Erase modes with direct tap placement;

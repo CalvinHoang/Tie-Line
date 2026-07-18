@@ -80,7 +80,6 @@ export function constructionHasProgress(state: ConstructionState): boolean {
     || state.metrics.phaseDeleteCount > 0
     || state.metrics.undoCount > 0
     || state.cells.some((cell) => cell.phaseOrder.length > 0)
-    || state.geometry.some((item) => item.type === "invariant-horizontal" && item.phaseOrder.length > 0)
   );
 }
 
@@ -89,7 +88,7 @@ export function hasResumableConstruction(difficulty: Difficulty = "normal"): boo
     const raw = localStorage.getItem(constructionKey(difficulty));
     if (!raw) return false;
     const state = JSON.parse(raw) as ConstructionState;
-    return state.version === 1 && constructionHasProgress(state);
+    return state.version === 2 && constructionHasProgress(state);
   } catch {
     return false;
   }
@@ -100,7 +99,7 @@ export function loadConstruction(puzzleId: string, difficulty: Difficulty = "nor
     const raw = localStorage.getItem(constructionKey(difficulty));
     if (!raw) return undefined;
     const state = JSON.parse(raw) as ConstructionState;
-    if (state.version !== 1 || state.puzzleId !== puzzleId) return undefined;
+    if (state.version !== 2 || state.puzzleId !== puzzleId) return undefined;
     return resumeTimer(state);
   } catch {
     return undefined;
