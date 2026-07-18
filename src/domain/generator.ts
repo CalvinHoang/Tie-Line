@@ -579,31 +579,31 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "monotectic
   if (spinodal) {
     const innerLeftX = domeLeftX + 5;
     const innerRightX = domeRightX - 5;
-    const innerPeakT = domePeakT - 70;
+    // The spinodal is tangent to the binodal at the critical point, so both
+    // inner curves terminate on the dome-peak node with horizontal tangents.
     solution.points.push(
       { roleId: "spinodal-left", point: point(innerLeftX, synT) },
-      { roleId: "spinodal-peak", point: point(gx, innerPeakT) },
       { roleId: "spinodal-right", point: point(innerRightX, synT) },
     );
     solution.invariants[2].interiorRoleIds = ["spinodal-left", "gamma-syntectic", "spinodal-right"];
     innerLeftIndex = solution.curves.length;
     solution.curves.push(
-      { type: "curve", startRoleId: "spinodal-left", endRoleId: "spinodal-peak", recommendedControl: bowedControl(point(innerLeftX, synT), point(gx, innerPeakT), 1, .32), semanticRole: "spinodal-left" },
-      { type: "curve", startRoleId: "spinodal-peak", endRoleId: "spinodal-right", recommendedControl: bowedControl(point(innerRightX, synT), point(gx, innerPeakT), 1, .32), semanticRole: "spinodal-right" },
+      { type: "curve", startRoleId: "spinodal-left", endRoleId: "dome-peak", recommendedControl: bowedControl(point(innerLeftX, synT), point(gx, domePeakT), 1, .32), semanticRole: "spinodal-left" },
+      { type: "curve", startRoleId: "dome-peak", endRoleId: "spinodal-right", recommendedControl: bowedControl(point(innerRightX, synT), point(gx, domePeakT), 1, .32), semanticRole: "spinodal-right" },
     );
   }
   const domeLeftIndex = 4;
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
     if (spinodal && boundaries.has(`generated-curve:${innerLeftIndex}`) && boundaries.has(`generated-curve:${innerLeftIndex + 1}`)) return { role: "unstable-two-liquid", phases: ["L1", "L2"] };
-    if (boundaries.has(`generated-curve:${domeLeftIndex}`) && boundaries.has(`generated-curve:${domeLeftIndex + 1}`)) return { role: "two-liquid", phases: ["L1", "L2"] };
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
+    if (boundaries.has(`generated-curve:${domeLeftIndex}`) || boundaries.has(`generated-curve:${domeLeftIndex + 1}`)) return { role: "two-liquid", phases: ["L1", "L2"] };
     if (label.compositionBPercent < gx) {
       if (label.temperatureCelsius < leftT) return { role: "alpha-gamma", phases: ["alpha", "gamma"] };
       return label.compositionBPercent < e1x ? { role: "liquid-alpha", phases: ["L", "alpha"] } : { role: "liquid-gamma-left", phases: ["L", "gamma"] };
     }
     if (label.temperatureCelsius < rightT) return { role: "gamma-beta", phases: ["gamma", "beta"] };
     return label.compositionBPercent < e2x ? { role: "liquid-gamma-right", phases: ["L", "gamma"] } : { role: "liquid-beta", phases: ["L", "beta"] };
-  }, spinodal ? 9 : 8);
+  }, spinodal ? 10 : 8);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Homogeneous liquid", kind: "liquid", required: true },
     { id: "L1", symbol: "L₁", name: "Liquid 1", kind: "liquid", required: true },

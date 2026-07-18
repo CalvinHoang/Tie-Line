@@ -76,11 +76,11 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
     </>,
     "spinodal-liquid": <>
       <path d="M16 26Q30 36 48 62"/>
-      <path d="M60 46Q64 18 82 16Q100 18 106 46"/>
+      <path d="M60 46Q64 16 82 16Q100 16 106 46"/>
       <path d="M38 46H106M106 46Q124 36 144 24"/>
       <path d="M16 62H144"/>
-      <path className="accent" d="M66 46Q70 22 82 20Q94 22 100 46"/>
-      <circle className="accent-fill" cx="82" cy="17" r="3"/>
+      <path className="accent" d="M66 46Q70 16 82 16Q94 16 100 46"/>
+      <circle className="accent-fill" cx="82" cy="16" r="3"/>
       <text x="83" y="40">2L</text>
       <text x="128" y="14">L</text>
     </>,
@@ -88,9 +88,9 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <path d="M16 50Q84 30 144 12"/>
       <path d="M16 50Q96 46 144 12"/>
       <path className="hatch" d="M16 64L144 32"/>
-      <path d="M52 96Q60 58 78 56Q96 58 104 96"/>
-      <path className="accent" d="M60 96Q66 62 78 60Q90 62 96 96"/>
-      <circle className="accent-fill" cx="78" cy="57" r="3"/>
+      <path d="M52 96Q60 56 78 56Q96 56 104 96"/>
+      <path className="accent" d="M60 96Q66 56 78 56Q90 56 96 96"/>
+      <circle className="accent-fill" cx="78" cy="56" r="3"/>
       <text x="52" y="22">L</text>
       <text x="78" y="88">2S</text>
     </>,
