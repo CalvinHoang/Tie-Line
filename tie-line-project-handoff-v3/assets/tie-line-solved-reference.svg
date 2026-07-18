@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720" role="img" aria-labelledby="title desc">
+<title id="title">Tie-Line solved golden puzzle</title><desc id="desc">Minimal binary eutectic phase diagram reference.</desc>
+<rect width="960" height="720" fill="#f4f3ef"/>
+<rect x="70.0" y="55.0" width="820" height="600" fill="none" stroke="#252724" stroke-width="2.5"/>
+<path d="M 70.00 109.55 Q 209.40 185.91 398.00 273.18" fill="none" stroke="#252724" stroke-width="2.5"/>
+<path d="M 890.00 191.36 Q 644.00 224.09 398.00 273.18" fill="none" stroke="#252724" stroke-width="2.5"/>
+<path d="M 70.00 109.55 Q 111.00 196.82 152.00 273.18" fill="none" stroke="#252724" stroke-width="2.5"/>
+<path d="M 890.00 191.36 Q 816.20 224.09 726.00 273.18" fill="none" stroke="#252724" stroke-width="2.5"/>
+<path d="M 70.00 655.00 Q 86.40 442.27 152.00 273.18" fill="none" stroke="#252724" stroke-width="2.5"/>
+<path d="M 890.00 655.00 Q 849.00 436.82 726.00 273.18" fill="none" stroke="#252724" stroke-width="2.5"/>
+<line x1="152.00" y1="273.18" x2="726.00" y2="273.18" stroke="#252724" stroke-width="2.5"/>
+<circle cx="70.00" cy="109.55" r="4" fill="#252724"/>
+<circle cx="890.00" cy="191.36" r="4" fill="#252724"/>
+<circle cx="152.00" cy="273.18" r="4" fill="#252724"/>
+<circle cx="398.00" cy="273.18" r="4" fill="#252724"/>
+<circle cx="726.00" cy="273.18" r="4" fill="#252724"/>
+<circle cx="70.00" cy="655.00" r="4" fill="#252724"/>
+<circle cx="890.00" cy="655.00" r="4" fill="#252724"/>
+<text x="480.00" y="164.09" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" fill="#252724">L</text>
+<text x="86.40" y="382.27" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" fill="#252724">α</text>
+<text x="857.20" y="423.18" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" fill="#252724">β</text>
+<text x="168.40" y="191.36" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" fill="#252724">L + α</text>
+<text x="709.60" y="232.27" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" fill="#252724">L + β</text>
+<text x="480.00" y="464.09" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" fill="#252724">α + β</text>
+<text x="496.40" y="298.18" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#252724">L + α + β</text>
+<text x="46" y="65" font-family="Arial, sans-serif" font-size="20" fill="#252724">T</text>
+<text x="70" y="685" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" fill="#252724">A</text>
+<text x="890" y="685" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" fill="#252724">B</text>
+</svg>

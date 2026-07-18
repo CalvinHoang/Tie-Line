@@ -1,0 +1,189 @@
+{
+  "puzzleId": "tie-line-eutectic-001",
+  "points": [
+    {
+      "roleId": "a-melt",
+      "point": {
+        "compositionBPercent": 0,
+        "temperatureCelsius": 1000
+      }
+    },
+    {
+      "roleId": "b-melt",
+      "point": {
+        "compositionBPercent": 100,
+        "temperatureCelsius": 850
+      }
+    },
+    {
+      "roleId": "alpha-eut",
+      "point": {
+        "compositionBPercent": 10,
+        "temperatureCelsius": 700
+      }
+    },
+    {
+      "roleId": "eutectic",
+      "point": {
+        "compositionBPercent": 40,
+        "temperatureCelsius": 700
+      }
+    },
+    {
+      "roleId": "beta-eut",
+      "point": {
+        "compositionBPercent": 80,
+        "temperatureCelsius": 700
+      }
+    },
+    {
+      "roleId": "alpha-low",
+      "point": {
+        "compositionBPercent": 0,
+        "temperatureCelsius": 0
+      }
+    },
+    {
+      "roleId": "beta-low",
+      "point": {
+        "compositionBPercent": 100,
+        "temperatureCelsius": 0
+      }
+    }
+  ],
+  "curves": [
+    {
+      "type": "curve",
+      "startRoleId": "a-melt",
+      "endRoleId": "eutectic",
+      "recommendedControl": {
+        "compositionBPercent": 17,
+        "temperatureCelsius": 860
+      }
+    },
+    {
+      "type": "curve",
+      "startRoleId": "b-melt",
+      "endRoleId": "eutectic",
+      "recommendedControl": {
+        "compositionBPercent": 70,
+        "temperatureCelsius": 790
+      }
+    },
+    {
+      "type": "curve",
+      "startRoleId": "a-melt",
+      "endRoleId": "alpha-eut",
+      "recommendedControl": {
+        "compositionBPercent": 5,
+        "temperatureCelsius": 840
+      }
+    },
+    {
+      "type": "curve",
+      "startRoleId": "b-melt",
+      "endRoleId": "beta-eut",
+      "recommendedControl": {
+        "compositionBPercent": 91,
+        "temperatureCelsius": 790
+      }
+    },
+    {
+      "type": "curve",
+      "startRoleId": "alpha-low",
+      "endRoleId": "alpha-eut",
+      "recommendedControl": {
+        "compositionBPercent": 2,
+        "temperatureCelsius": 390
+      }
+    },
+    {
+      "type": "curve",
+      "startRoleId": "beta-low",
+      "endRoleId": "beta-eut",
+      "recommendedControl": {
+        "compositionBPercent": 95,
+        "temperatureCelsius": 400
+      }
+    }
+  ],
+  "invariant": {
+    "type": "invariant-horizontal",
+    "startRoleId": "alpha-eut",
+    "endRoleId": "beta-eut",
+    "interiorRoleIds": [
+      "eutectic"
+    ],
+    "temperatureCelsius": 700,
+    "expectedAssemblage": [
+      "L",
+      "alpha",
+      "beta"
+    ]
+  },
+  "expectedFields": [
+    {
+      "role": "liquid",
+      "expectedAssemblage": [
+        "L"
+      ],
+      "witnessPoint": {
+        "compositionBPercent": 50,
+        "temperatureCelsius": 900
+      }
+    },
+    {
+      "role": "alpha",
+      "expectedAssemblage": [
+        "alpha"
+      ],
+      "witnessPoint": {
+        "compositionBPercent": 2,
+        "temperatureCelsius": 500
+      }
+    },
+    {
+      "role": "beta",
+      "expectedAssemblage": [
+        "beta"
+      ],
+      "witnessPoint": {
+        "compositionBPercent": 96,
+        "temperatureCelsius": 425
+      }
+    },
+    {
+      "role": "liquid-alpha",
+      "expectedAssemblage": [
+        "L",
+        "alpha"
+      ],
+      "witnessPoint": {
+        "compositionBPercent": 12,
+        "temperatureCelsius": 850
+      }
+    },
+    {
+      "role": "liquid-beta",
+      "expectedAssemblage": [
+        "L",
+        "beta"
+      ],
+      "witnessPoint": {
+        "compositionBPercent": 78,
+        "temperatureCelsius": 775
+      }
+    },
+    {
+      "role": "alpha-beta",
+      "expectedAssemblage": [
+        "alpha",
+        "beta"
+      ],
+      "witnessPoint": {
+        "compositionBPercent": 50,
+        "temperatureCelsius": 350
+      }
+    }
+  ]
+}
