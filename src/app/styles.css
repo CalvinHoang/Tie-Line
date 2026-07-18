@@ -107,6 +107,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .attempts { display: flex; gap: 5px; }
 .attempts span { width: 7px; height: 7px; background: var(--raised); border: 1px solid #4c535b; border-radius: 2px; transition: transform 180ms var(--motion), background-color 180ms var(--motion); }
 .attempts span.is-available { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px rgb(86 212 210 / 28%); }
+.attempts span.is-spent { animation: attempt-spent 420ms var(--spring) both; }
 
 .board-region { min-height: 0; position: relative; padding: 0 7px 84px; }
 .diagram-canvas {
@@ -137,6 +138,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .field-target { fill: transparent; stroke: none; pointer-events: all; cursor: cell; transition: fill 160ms ease; }
 .field-target:hover { fill: rgb(86 212 210 / 5%); }
 .field-target:active { fill: rgb(86 212 210 / 12%); }
+.field-target.is-confirmed { animation: field-confirm 360ms var(--spring); }
 .field-target.is-labelled { fill: rgb(255 255 255 / 2.5%); }
 .field-target.field-L, .field-target.field-L1 { fill: rgb(98 216 214 / 6%); }
 .field-target.field-L2 { fill: rgb(131 191 240 / 6%); }
@@ -160,7 +162,8 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .geometry-line.is-selected { stroke: var(--accent); stroke-width: 4; }
 .invariant-line { stroke: var(--accent); stroke-width: 2.8; }
-.geometry-hit { fill: none; stroke: transparent; stroke-width: 30; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
+.invariant-line.is-confirmed { animation: invariant-confirm 360ms var(--spring); }
+.geometry-hit { fill: none; stroke: transparent; stroke-width: 38; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
 .point-hit { fill: transparent; pointer-events: all; cursor: pointer; }
 .point-dot {
   fill: var(--surface);
@@ -183,6 +186,8 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .curve-handle line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
 .curve-handle circle { fill: var(--surface); stroke: var(--accent); stroke-width: 4; vector-effect: non-scaling-stroke; cursor: grab; }
 .phase-label { transform-box: fill-box; transform-origin: center; animation: label-pop 280ms var(--spring) both; }
+.phase-token { transform-box: fill-box; transform-origin: center; transition: transform 220ms var(--spring); will-change: transform; }
+.phase-token > text { transform-box: fill-box; transform-origin: center; animation: phase-token-in 220ms var(--spring) both; }
 .phase-label rect { fill: transparent; }
 .phase-label text { font-family: "STIX Two Math", "Cambria Math", serif; font-size: 28px; font-weight: 400; dominant-baseline: middle; pointer-events: none; paint-order: stroke; stroke: var(--surface); stroke-width: 8px; stroke-linejoin: round; }
 .phase-label .phase-plus { fill: #aab2b8; font-size: 18px; font-weight: 500; }
@@ -197,6 +202,17 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .field-target.field-gamma { fill: rgb(255 159 115 / 6%); }
 .field-target.field-delta { fill: rgb(155 207 130 / 6%); }
 .field-target.field-betaPrime { fill: rgb(185 166 243 / 6%); }
+.target-contact { fill: none; stroke: var(--contact-color, var(--accent)); stroke-width: 3; pointer-events: none; vector-effect: non-scaling-stroke; transform-box: fill-box; transform-origin: center; }
+.target-contact.is-adding { animation: target-contact-add 360ms var(--spring) both; }
+.target-contact.is-removing { animation: target-contact-remove 360ms var(--spring) both; }
+.target-contact.phase-L, .target-contact.phase-L1 { --contact-color: var(--liquid); }
+.target-contact.phase-L2 { --contact-color: #83bff0; }
+.target-contact.phase-alpha, .target-contact.phase-alpha1 { --contact-color: var(--alpha); }
+.target-contact.phase-alpha2 { --contact-color: #f0a56e; }
+.target-contact.phase-beta { --contact-color: var(--beta); }
+.target-contact.phase-gamma { --contact-color: var(--gamma); }
+.target-contact.phase-delta { --contact-color: #9bcf82; }
+.target-contact.phase-betaPrime { --contact-color: #b9a6f3; }
 
 .palette-rail {
   min-height: 54px;
@@ -232,7 +248,21 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .symbol-palette button[data-placed] { color: var(--muted); }
 .placed-mark { position: absolute; right: 6px; top: 2px; font-size: 22px; color: var(--success); }
 .phase-palette button { font-size: 22px; }
-.phase-palette button.is-active { color: var(--accent-ink); }
+.phase-palette button { --phase-color: var(--ink); color: var(--phase-color); }
+.phase-palette button.phase-L, .phase-palette button.phase-L1 { --phase-color: var(--liquid); }
+.phase-palette button.phase-L2 { --phase-color: #83bff0; }
+.phase-palette button.phase-alpha, .phase-palette button.phase-alpha1 { --phase-color: var(--alpha); }
+.phase-palette button.phase-alpha2 { --phase-color: #f0a56e; }
+.phase-palette button.phase-beta { --phase-color: var(--beta); }
+.phase-palette button.phase-gamma { --phase-color: var(--gamma); }
+.phase-palette button.phase-delta { --phase-color: #9bcf82; }
+.phase-palette button.phase-betaPrime { --phase-color: #b9a6f3; }
+.phase-palette button.is-active {
+  color: var(--phase-color);
+  border-color: var(--phase-color);
+  background: color-mix(in srgb, var(--phase-color) 18%, var(--raised));
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--phase-color) 24%, transparent);
+}
 
 .control-rail {
   position: absolute;
@@ -256,7 +286,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   min-height: 60px;
   padding: 5px 6px;
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 42px 50px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px 50px;
   align-items: center;
   gap: 4px;
   z-index: 8;
@@ -264,11 +294,11 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   background: linear-gradient(to top, var(--paper) 70%, transparent);
 }
 .minimal-control-rail > .symbol-palette { justify-self: center; width: 100%; min-width: 0; max-width: 100%; padding: 4px; overflow-x: auto; }
-.minimal-control-rail > .symbol-palette button { flex-basis: 40px; min-width: 40px; min-height: 40px; }
-.minimal-control-rail .icon-action { min-width: 36px; min-height: 42px; font-size: 20px; }
+.minimal-control-rail > .symbol-palette button { flex-basis: 44px; min-width: 44px; min-height: 44px; }
+.minimal-control-rail .icon-action { min-width: 44px; min-height: 44px; font-size: 20px; }
 .minimal-control-rail .icon-action:disabled { pointer-events: none; }
 .minimal-control-rail .submit-action { width: 46px; height: 46px; min-width: 46px; min-height: 46px; }
-.erase-action { width: 40px; height: 40px; border: 1px solid var(--hairline); border-radius: 50%; color: var(--muted); background: var(--surface); cursor: pointer; font-size: 18px; }
+.erase-action { width: 44px; height: 44px; border: 1px solid var(--hairline); border-radius: 50%; color: var(--muted); background: var(--surface); cursor: pointer; font-size: 18px; }
 .erase-action.is-active { color: var(--accent-ink); border-color: var(--accent); background: var(--accent); }
 .board-region .diagram-canvas { animation: play-board-in 480ms cubic-bezier(.22,.8,.3,1) both; }
 .icon-action { color: #adb4ba; font-size: 24px; }
@@ -348,6 +378,11 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .completion-actions { bottom: 78px; display: flex; align-items: center; gap: 12px; padding: 6px 7px 6px 15px; border-radius: 16px; font-size: 12px; animation: completion-in 420ms var(--spring) both; }
 .completion-actions button { min-width: 58px; min-height: 40px; background: var(--accent); color: var(--accent-ink); font-weight: 750; }
 .is-clean .instruction-strip { opacity: .52; transition: opacity 240ms ease; }
+.game-shell.is-solved .geometry-line { animation: equilibrium-settle 720ms var(--spring) both; }
+.game-shell.is-solved .phase-label { animation: labels-lock 520ms var(--spring) both; }
+.submission-impact { position: absolute; inset: 5px 7px 84px; z-index: 6; border-radius: 18px; pointer-events: none; opacity: 0; }
+.submission-impact.is-wrong { animation: submission-rejected 460ms var(--spring) both; }
+.submission-impact.is-solved { animation: submission-solved 760ms var(--spring) both; }
 
 .home-screen {
   position: absolute;
@@ -528,8 +563,8 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes rail-in {
-  from { opacity: 0; transform: translateY(12px) scale(.96); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 @keyframes menu-in {
   from { opacity: 0; transform: translateY(8px) scale(.96); }
@@ -542,6 +577,53 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 @keyframes completion-in {
   from { opacity: 0; transform: translate(-50%, 8px); }
   to { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes phase-token-in {
+  from { opacity: 0; transform: scale(.68); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes field-confirm {
+  0% { filter: brightness(1); }
+  45% { filter: brightness(1.75); }
+  100% { filter: brightness(1); }
+}
+@keyframes invariant-confirm {
+  0% { stroke-width: 2.8; filter: brightness(1); }
+  45% { stroke-width: 5; filter: brightness(1.7); }
+  100% { stroke-width: 2.8; filter: brightness(1); }
+}
+@keyframes target-contact-add {
+  from { opacity: .95; transform: scale(.45); }
+  to { opacity: 0; transform: scale(3.1); }
+}
+@keyframes target-contact-remove {
+  from { opacity: .9; transform: scale(2.2); stroke-dasharray: 3 3; }
+  to { opacity: 0; transform: scale(.35); stroke-dasharray: 3 3; }
+}
+@keyframes attempt-spent {
+  0% { transform: scale(1); background: var(--accent); border-color: var(--accent); }
+  45% { transform: scale(1.9) rotate(12deg); background: var(--error); border-color: var(--error); }
+  100% { transform: scale(1); background: var(--raised); border-color: #4c535b; }
+}
+@keyframes submission-rejected {
+  0%, 100% { opacity: 0; box-shadow: inset 0 0 0 1px transparent; transform: translateX(0); }
+  28% { opacity: .8; box-shadow: inset 0 0 0 2px rgb(255 121 109 / 48%); transform: translateX(-3px); }
+  52% { opacity: .55; transform: translateX(3px); }
+}
+@keyframes submission-solved {
+  0% { opacity: 0; box-shadow: inset 0 0 0 1px transparent; }
+  35% { opacity: 1; box-shadow: inset 0 0 42px rgb(114 214 160 / 16%), inset 0 0 0 2px rgb(114 214 160 / 58%); }
+  100% { opacity: 0; box-shadow: inset 0 0 72px transparent, inset 0 0 0 1px transparent; }
+}
+@keyframes equilibrium-settle {
+  0% { filter: brightness(1); }
+  45% { filter: brightness(1.9) drop-shadow(0 0 5px rgb(114 214 160 / 42%)); }
+  100% { filter: brightness(1); }
+}
+@keyframes labels-lock {
+  0% { opacity: .6; transform: scale(.96); }
+  55% { opacity: 1; transform: scale(1.04); }
+  100% { opacity: 1; transform: scale(1); }
 }
 
 @media (min-width: 760px) {
@@ -560,9 +642,9 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   .status-cluster { gap: 5px; }
   .status-cluster time { font-size: 10px; }
   .board-region { padding-inline: 2px; }
-  .minimal-control-rail { grid-template-columns: 34px minmax(0, 1fr) 40px 46px; gap: 8px; }
-  .minimal-control-rail .icon-action { width: 34px; min-width: 34px; }
-  .minimal-control-rail > .symbol-palette button { flex-basis: 36px; min-width: 36px; }
+  .minimal-control-rail { grid-template-columns: 44px minmax(0, 1fr) 44px 46px; gap: 4px; }
+  .minimal-control-rail .icon-action { width: 44px; min-width: 44px; }
+  .minimal-control-rail > .symbol-palette button { flex-basis: 44px; min-width: 44px; }
   .foundation-grid, .processing-rules > div { grid-template-columns: 1fr; }
 }
 

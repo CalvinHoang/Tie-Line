@@ -7,8 +7,6 @@ import type { ConstructionState, ViewportState } from "../domain/schema";
 import {
   activeMilliseconds,
   addGeometry,
-  addPhaseToCell,
-  addPhaseToInvariant,
   createLabelingState,
   deleteGeometry,
   deletePoint,
@@ -19,6 +17,8 @@ import {
   removePhaseFromInvariant,
   resumeTimer,
   setTool,
+  togglePhaseInCell,
+  togglePhaseInInvariant,
   updateGeometry,
 } from "../editor/state";
 import {
@@ -159,6 +159,7 @@ export function App() {
   const [atHome, setAtHome] = useState(true);
   const [panel, setPanel] = useState<Panel>();
   const [feedback, setFeedback] = useState<string>();
+  const [submitImpact, setSubmitImpact] = useState<{ id: number; kind: "wrong" | "solved" }>();
   const [clock, setClock] = useState(Date.now());
   const [selectedConceptId, setSelectedConceptId] = useState<string>();
   const history = useRef<ConstructionState[]>([]);
@@ -199,9 +200,11 @@ export function App() {
 
   const commit = useCallback((update: (current: ConstructionState) => ConstructionState) => {
     setState((current) => {
+      const next = update(current);
+      if (next === current) return current;
       history.current.push(structuredClone(current));
       if (history.current.length > 80) history.current.shift();
-      return update(current);
+      return next;
     });
   }, []);
 
@@ -279,6 +282,7 @@ export function App() {
     if (state.solved || state.revealed) return;
     const result = validateSubmit(state, puzzle, solution);
     if (result.status === "solved") {
+      setSubmitImpact((current) => ({ id: (current?.id ?? 0) + 1, kind: "solved" }));
       const submissions = state.metrics.submitCount + 1;
       commit((current) => {
         const paused = pauseTimer(current);
@@ -289,15 +293,17 @@ export function App() {
       return;
     }
     if (state.metrics.continuingUnscored) {
+      setSubmitImpact((current) => ({ id: (current?.id ?? 0) + 1, kind: "wrong" }));
       commit((current) => ({ ...current, lastSubmitStatus: result.status, metrics: { ...current.metrics, submitCount: current.metrics.submitCount + 1 } }));
       announce(result.status === "incomplete" ? "Some labels are still missing" : "Not quite — check each phase assemblage");
       return;
     }
     const lastAttempt = state.metrics.submissionsRemaining <= 1;
     const submissions = state.metrics.submitCount + 1;
+    setSubmitImpact((current) => ({ id: (current?.id ?? 0) + 1, kind: "wrong" }));
     commit((current) => {
-      const next = { ...current, lastSubmitStatus: lastAttempt ? "failed-scored-attempt" as const : result.status, metrics: { ...current.metrics, submitCount: submissions, submissionsRemaining: Math.max(0, current.metrics.submissionsRemaining - 1), scoredAttemptEnded: lastAttempt } };
-      return lastAttempt ? pauseTimer(next) : next;
+      const timed = lastAttempt ? pauseTimer(current) : current;
+      return { ...timed, lastSubmitStatus: lastAttempt ? "failed-scored-attempt" as const : result.status, metrics: { ...timed.metrics, submitCount: submissions, submissionsRemaining: Math.max(0, timed.metrics.submissionsRemaining - 1), scoredAttemptEnded: lastAttempt } };
     });
     if (lastAttempt) recordOutcome("failed", true, submissions);
     announce(lastAttempt ? "Scored attempt ended" : result.status === "incomplete" ? "Incomplete" : "Not correct");
@@ -327,7 +333,7 @@ export function App() {
   };
 
   return (
-    <main className={`game-shell ${state.solved || state.revealed ? "is-clean" : ""} ${profile.settings.leftHanded ? "left-handed" : ""}`}>
+    <main className={`game-shell ${state.solved || state.revealed ? "is-clean" : ""} ${state.solved ? "is-solved" : ""} ${profile.settings.leftHanded ? "left-handed" : ""}`}>
       {atHome ? (
         <section className="home-screen" aria-label="Main menu">
           <div className="home-menu">
@@ -353,7 +359,7 @@ export function App() {
           <button className="back-action" type="button" aria-label="Main menu" onClick={goHome}>‹</button>
           <div className="status-cluster" aria-label="Puzzle status">
             <time aria-label={`Elapsed time ${elapsed}`}>{elapsed}</time>
-            <div className="attempts" aria-label={`${state.metrics.submissionsRemaining} submissions remaining`}>{[0, 1, 2].map((index) => <span key={index} className={index < state.metrics.submissionsRemaining ? "is-available" : ""} />)}</div>
+            <div className="attempts" aria-label={`${state.metrics.submissionsRemaining} submissions remaining`}>{[0, 1, 2].map((index) => <span key={index} className={`${index < state.metrics.submissionsRemaining ? "is-available" : ""} ${state.metrics.submitCount > 0 && index === state.metrics.submissionsRemaining ? "is-spent" : ""}`} />)}</div>
           </div>
           <button className="reset-view-action" type="button" aria-label="Reset view" onClick={() => updateTransient((current) => ({ ...current, viewport: { scale: 1, translateX: 0, translateY: 0 } }))}>⌾</button>
         </header>
@@ -367,9 +373,9 @@ export function App() {
               onPlacePoint={(roleId, value) => commit((current) => placeOrMovePoint(current, roleId, value))}
               onAddGeometry={(value) => commit((current) => addGeometry(current, value))}
               onUpdateGeometry={(value) => commit((current) => updateGeometry(current, value))}
-              onAddPhaseToCell={(cellId, phaseId) => commit((current) => addPhaseToCell(current, cellId, phaseId))}
+              onTogglePhaseInCell={(cellId, phaseId) => commit((current) => togglePhaseInCell(current, cellId, phaseId, puzzle.phases.map((phase) => phase.id)))}
               onRemovePhaseFromCell={(cellId, phaseId) => commit((current) => removePhaseFromCell(current, cellId, phaseId))}
-              onAddPhaseToInvariant={(geometryId, phaseId) => commit((current) => addPhaseToInvariant(current, geometryId, phaseId))}
+              onTogglePhaseInInvariant={(geometryId, phaseId) => commit((current) => togglePhaseInInvariant(current, geometryId, phaseId, puzzle.phases.map((phase) => phase.id)))}
               onRemovePhaseFromInvariant={(geometryId, phaseId) => commit((current) => removePhaseFromInvariant(current, geometryId, phaseId))}
               onDeleteGeometry={(geometryId) => commit((current) => deleteGeometry(current, geometryId))}
               onDeletePoint={(pointId) => commit((current) => deletePoint(current, pointId))}
@@ -377,6 +383,7 @@ export function App() {
               onViewportChange={(viewport: ViewportState) => updateTransient((current) => ({ ...current, viewport }))}
               onRejected={announce}
             />
+            {submitImpact && <span key={submitImpact.id} className={`submission-impact is-${submitImpact.kind}`} aria-hidden="true" />}
             {state.metrics.scoredAttemptEnded && !state.metrics.continuingUnscored && !state.revealed && (
               <div className="failure-actions" aria-label="Scored attempt ended">
                 <button type="button" onClick={() => commit((current) => ({ ...current, metrics: { ...current.metrics, continuingUnscored: true } }))}>Continue</button>

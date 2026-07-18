@@ -67,9 +67,58 @@ test("lets the player label a generated phase field", async ({ page }) => {
   const field = board.locator(".field-target").first();
   const box = await field.boundingBox();
   if (!box) throw new Error("Generated field is unavailable");
-  await page.getByRole("toolbar", { name: "Phase symbols" }).locator("button").first().click();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(board.locator(".phase-label")).toHaveCount(1);
+  const anchor = board.locator(".phase-label-position").first();
+  await expect(anchor).toHaveAttribute("data-fits-field", "true");
+  const centreBefore = [await anchor.getAttribute("data-anchor-x"), await anchor.getAttribute("data-anchor-y")];
+  await page.getByRole("button", { name: "Beta phase", exact: true }).click();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(anchor).toContainText("L+β");
+  expect([await anchor.getAttribute("data-anchor-x"), await anchor.getAttribute("data-anchor-y")]).toEqual(centreBefore);
+});
+
+test("toggles the selected phase off with a second direct tap", async ({ page }) => {
+  await startGame(page);
+  const board = page.getByRole("application", { name: /phase diagram board/i });
+  const field = board.locator(".field-target").first();
+  const box = await field.boundingBox();
+  if (!box) throw new Error("Generated field is unavailable");
+
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(board.locator(".phase-label")).toHaveCount(1);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(board.locator(".phase-label")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(board.locator(".phase-label")).toHaveCount(1);
+});
+
+test("preserves elapsed time when the scored attempt ends", async ({ page }) => {
+  await startGame(page);
+  await page.waitForTimeout(1100);
+  const submit = page.getByRole("button", { name: "Submit labels", exact: true });
+
+  await submit.click();
+  await expect(page.getByLabel("2 submissions remaining")).toBeVisible();
+  await submit.click();
+  await expect(page.getByLabel("1 submissions remaining")).toBeVisible();
+  await submit.click();
+  await expect(page.getByLabel("Scored attempt ended")).toBeVisible();
+  await expect(page.locator("time")).not.toHaveText("00:00");
+});
+
+test("keeps primary mobile controls at least 44 pixels", async ({ page }) => {
+  await startGame(page);
+  if (await page.evaluate(() => window.innerWidth > 420)) return;
+  const controls = page.locator("footer button");
+  const count = await controls.count();
+  for (let index = 0; index < count; index += 1) {
+    const box = await controls.nth(index).boundingBox();
+    if (!box) throw new Error(`Control ${index} is unavailable`);
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
 });
 
 test("new generated diagram changes the seed and keeps geometry locked", async ({ page }) => {
