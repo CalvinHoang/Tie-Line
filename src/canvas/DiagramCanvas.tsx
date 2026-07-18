@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { constrainPoint, distance, formatCoordinate, FRAME, logicalToSvg, roleById, svgToLogical, VIEWBOX } from "../domain/coordinates";
 import { geometryPolyline, hasIllegalIntersection, pointInPolygon, unorderedPairKey } from "../domain/geometry";
+import { fieldLabelPlacement } from "./label-placement";
 import type {
   ConstructionState,
   LogicalPoint,
@@ -27,9 +28,9 @@ interface DiagramCanvasProps {
   onPlacePoint: (roleId: string, point: LogicalPoint) => void;
   onAddGeometry: (geometry: PlayerGeometry) => void;
   onUpdateGeometry: (geometry: PlayerGeometry) => void;
-  onAddPhaseToCell: (cellId: string, phaseId: PhaseId) => void;
+  onTogglePhaseInCell: (cellId: string, phaseId: PhaseId) => void;
   onRemovePhaseFromCell: (cellId: string, phaseId: PhaseId) => void;
-  onAddPhaseToInvariant: (geometryId: string, phaseId: PhaseId) => void;
+  onTogglePhaseInInvariant: (geometryId: string, phaseId: PhaseId) => void;
   onRemovePhaseFromInvariant: (geometryId: string, phaseId: PhaseId) => void;
   onDeleteGeometry: (geometryId: string) => void;
   onDeletePoint: (pointId: string) => void;
@@ -56,6 +57,19 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   const [gesture, setGesture] = useState<Gesture>();
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ distance: number; center: { x: number; y: number }; viewport: ViewportState } | undefined>(undefined);
+  const [targetFeedback, setTargetFeedback] = useState<{
+    id: number;
+    targetId: string;
+    point: LogicalPoint;
+    phaseId: PhaseId;
+    removing: boolean;
+  }>();
+
+  useEffect(() => {
+    if (!targetFeedback) return;
+    const timer = window.setTimeout(() => setTargetFeedback((current) => current?.id === targetFeedback.id ? undefined : current), 360);
+    return () => window.clearTimeout(timer);
+  }, [targetFeedback]);
 
   const toLogical = (clientX: number, clientY: number): LogicalPoint => {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -70,6 +84,16 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   // sub-pixel client/SVG conversion at different device scales.
   const inFrame = (point: LogicalPoint) => point.compositionBPercent >= -2 && point.compositionBPercent <= 102
     && point.temperatureCelsius >= -25 && point.temperatureCelsius <= 1125;
+
+  const confirmTarget = (event: React.PointerEvent<SVGElement>, targetId: string, phaseId: PhaseId, removing: boolean) => {
+    setTargetFeedback((current) => ({
+      id: (current?.id ?? 0) + 1,
+      targetId,
+      point: toLogical(event.clientX, event.clientY),
+      phaseId,
+      removing,
+    }));
+  };
 
   const pointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
     if (state.solved || state.revealed) return;
@@ -205,6 +229,10 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     return { curve, d: `M${a.x} ${a.y} Q${c.x} ${c.y} ${b.x} ${b.y}` };
   }), [state.geometry, state.points]);
 
+  const fieldLabelPlacements = useMemo(() => new Map(state.cells
+    .filter((cell) => cell.phaseOrder.length > 0)
+    .map((cell) => [cell.id, fieldLabelPlacement(cell.polygon, Math.max(2, cell.phaseOrder.length))])), [state.cells]);
+
   const previewPoint = gesture?.kind === "point" || gesture?.kind === "move-point" ? gesture.preview
     : props.externalPreview?.kind === "point" ? props.externalPreview.point : undefined;
   const selectedCurve = state.geometry.find((item) => item.id === state.selectedElementId && item.type === "curve" && item.createdBy === "player") as QuadraticCurveGeometry | undefined;
@@ -241,10 +269,12 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
         {state.cells.map((cell) => {
           const d = `${logicalPath(cell.polygon)} Z`;
           const phaseClasses = cell.phaseOrder.map((phase) => `field-${phase}`).join(" ");
-          return <path key={cell.id} className={`field-target ${cell.phaseOrder.length > 0 ? "is-labelled" : ""} ${phaseClasses}`} d={d} onPointerDown={(event) => {
+          return <path key={cell.id} className={`field-target ${cell.phaseOrder.length > 0 ? "is-labelled" : ""} ${targetFeedback?.targetId === cell.id ? "is-confirmed" : ""} ${phaseClasses}`} d={d} onPointerDown={(event) => {
             if (state.activeTool !== "label" || !state.activePhaseId || state.solved || state.revealed) return;
             event.stopPropagation();
-            props.onAddPhaseToCell(cell.id, state.activePhaseId);
+            const phaseId = state.activePhaseId;
+            confirmTarget(event, cell.id, phaseId, cell.phaseOrder.includes(phaseId));
+            props.onTogglePhaseInCell(cell.id, phaseId);
           }} />;
         })}
 
@@ -279,11 +309,15 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
               <line className="geometry-hit" x1={start.x} y1={start.y} x2={end.x} y2={end.y} onPointerDown={(event) => {
                 if (state.solved) return;
                 event.stopPropagation();
-                if (state.activeTool === "label" && state.activePhaseId) props.onAddPhaseToInvariant(horizontal.id, state.activePhaseId);
+                if (state.activeTool === "label" && state.activePhaseId) {
+                  const phaseId = state.activePhaseId;
+                  confirmTarget(event, horizontal.id, phaseId, horizontal.phaseOrder.includes(phaseId));
+                  props.onTogglePhaseInInvariant(horizontal.id, phaseId);
+                }
                 if (horizontal.createdBy === "player" && state.activeTool === "erase") props.onDeleteGeometry(horizontal.id);
                 if (horizontal.createdBy === "player" && state.activeTool === "select") props.onSelectElement(horizontal.id);
               }} />
-              <line pathLength={1} className={`geometry-line invariant-line ${state.selectedElementId === horizontal.id ? "is-selected" : ""}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />
+              <line pathLength={1} className={`geometry-line invariant-line ${targetFeedback?.targetId === horizontal.id ? "is-confirmed" : ""} ${state.selectedElementId === horizontal.id ? "is-selected" : ""}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />
               {horizontal.phaseOrder.length > 0 && (
                 <PhaseLabel
                   x={(start.x + end.x) / 2}
@@ -326,15 +360,29 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
           );
         })}
 
+        {targetFeedback && (() => {
+          const point = logicalToSvg(targetFeedback.point);
+          return <circle
+            key={targetFeedback.id}
+            className={`target-contact phase-${targetFeedback.phaseId} ${targetFeedback.removing ? "is-removing" : "is-adding"}`}
+            cx={point.x}
+            cy={point.y}
+            r={8}
+          />;
+        })()}
+
         {state.cells.map((cell) => {
           if (cell.phaseOrder.length === 0) return null;
-          const label = logicalToSvg(cell.labelPoint);
+          const label = fieldLabelPlacements.get(cell.id) ?? { ...logicalToSvg(cell.labelPoint), scale: 1, fits: false, orientation: "horizontal" as const };
           return <PhaseLabel
             key={`label:${cell.id}`}
             x={label.x}
             y={label.y}
             phases={cell.phaseOrder}
             puzzle={puzzle}
+            scale={label.scale}
+            fitsField={label.fits}
+            orientation={label.orientation}
             onRemove={state.activeTool === "erase"
               ? (phaseId) => props.onRemovePhaseFromCell(cell.id, phaseId)
               : undefined}
@@ -392,27 +440,40 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   );
 }
 
-function PhaseLabel({ x, y, phases, puzzle, onRemove }: {
+function PhaseLabel({ x, y, phases, puzzle, scale = 1, fitsField = true, orientation = "horizontal", onRemove }: {
   x: number;
   y: number;
   phases: PhaseId[];
   puzzle: PuzzleDefinition;
+  scale?: number;
+  fitsField?: boolean;
+  orientation?: "horizontal" | "vertical";
   onRemove?: (phaseId: PhaseId) => void;
 }) {
-  const offsets = phases.map((_, index) => (index - (phases.length - 1) / 2) * 45);
+  const offsets = phases.map((_, index) => (index - (phases.length - 1) / 2) * (orientation === "horizontal" ? 45 : 36));
   return (
-    <g className="phase-label">
-      {phases.map((phase, index) => (
-        <g key={phase} transform={`translate(${x + offsets[index]} ${y})`} onPointerDown={(event) => {
-          if (!onRemove) return;
-          event.stopPropagation();
-          onRemove(phase);
-        }}>
-          <rect x={-18} y={-22} width={36} height={34} pointerEvents={onRemove ? "all" : "none"} />
-          <text className={`phase-${phase}`} textAnchor="middle">{phaseSymbol(puzzle, phase)}</text>
-          {index < phases.length - 1 && <text className="phase-plus" x={22}>+</text>}
+    <g className="phase-label-position" transform={`translate(${x} ${y})`} data-anchor-x={x} data-anchor-y={y} data-fits-field={fitsField}>
+      <g className="phase-label-scale" transform={`scale(${scale})`}>
+        <g className="phase-label">
+          {phases.map((phase, index) => (
+            <g
+              key={phase}
+              className="phase-token"
+              data-phase={phase}
+              style={{ transform: orientation === "horizontal" ? `translate(${offsets[index]}px, 0)` : `translate(0, ${offsets[index]}px)` }}
+              onPointerDown={(event) => {
+              if (!onRemove) return;
+              event.stopPropagation();
+              onRemove(phase);
+              }}
+            >
+              <rect x={-18} y={-22} width={36} height={34} pointerEvents={onRemove ? "all" : "none"} />
+              <text className={`phase-${phase}`} textAnchor="middle">{phaseSymbol(puzzle, phase)}</text>
+              {index < phases.length - 1 && <text className="phase-plus" x={orientation === "horizontal" ? 22 : 0} y={orientation === "horizontal" ? 0 : 18} textAnchor="middle">+</text>}
+            </g>
+          ))}
         </g>
-      ))}
+      </g>
     </g>
   );
 }

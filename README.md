@@ -30,7 +30,9 @@ The Playwright command requires its Chromium runtime (`npx playwright install ch
 - visible active timer and three scored submissions;
 - focused Label and Erase modes with direct tap placement;
 - deterministic planar face extraction and direct field labelling;
-- unordered semantic assemblage validation with visual insertion order;
+- field-aware label placement: a tap selects the field, while the full assemblage is automatically anchored inside its extracted polygon;
+- canonical visual phase ordering with unordered semantic assemblage validation;
+- adaptive horizontal or vertical label layout for narrow and curved fields;
 - undo, local autosave, and one resumable puzzle per difficulty;
 - failed-attempt continuation, solution reveal, and clean solved state;
 - Rules covering pages 1–5 of the supplied notes, critical points, transformations, and binary diagram families with original vector schematics;
