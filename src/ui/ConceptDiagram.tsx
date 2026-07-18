@@ -28,6 +28,7 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <path d="M16 22Q48 34 78 62M144 26Q108 36 78 62"/>
       <path className="accent" d="M24 62H136"/>
       <path d="M78 62Q60 78 50 96M78 62Q98 78 108 96"/>
+      <path className="hatch" d="M66 34L90 34M70 46L86 46"/>
       <circle cx="78" cy="62" r="3"/>
       <text x="78" y="20">γ</text>
       <text x="30" y="90">α</text>
@@ -37,6 +38,7 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <path d="M16 24Q48 34 76 56M144 28Q108 38 76 56"/>
       <path className="accent" d="M26 56H130"/>
       <path d="M76 56Q64 78 58 96M76 56Q90 78 96 96"/>
+      <path className="hatch" d="M70 78L84 78M68 88L88 88"/>
       <circle cx="76" cy="56" r="3"/>
       <text x="34" y="26">α</text>
       <text x="118" y="30">β</text>
@@ -49,6 +51,7 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <path d="M110 46Q126 36 144 24"/>
       <path d="M16 70H144"/>
       <circle cx="110" cy="46" r="3"/>
+      <circle className="accent-fill" cx="86" cy="20" r="3"/>
       <text x="87" y="38">2L</text>
       <text x="128" y="14">L</text>
     </>,
@@ -70,6 +73,26 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <path className="accent dashed" d="M56 96Q80 56 104 96"/>
       <text x="80" y="36">2L</text>
       <text x="80" y="86">(2L)</text>
+    </>,
+    "spinodal-liquid": <>
+      <path d="M16 26Q30 36 48 62"/>
+      <path d="M60 46Q64 18 82 16Q100 18 106 46"/>
+      <path d="M38 46H106M106 46Q124 36 144 24"/>
+      <path d="M16 62H144"/>
+      <path className="accent" d="M66 46Q70 22 82 20Q94 22 100 46"/>
+      <circle className="accent-fill" cx="82" cy="17" r="3"/>
+      <text x="83" y="40">2L</text>
+      <text x="128" y="14">L</text>
+    </>,
+    "spinodal-solid": <>
+      <path d="M16 50Q84 30 144 12"/>
+      <path d="M16 50Q96 46 144 12"/>
+      <path className="hatch" d="M16 64L144 32"/>
+      <path d="M52 96Q60 58 78 56Q96 58 104 96"/>
+      <path className="accent" d="M60 96Q66 62 78 60Q90 62 96 96"/>
+      <circle className="accent-fill" cx="78" cy="57" r="3"/>
+      <text x="52" y="22">L</text>
+      <text x="78" y="88">2S</text>
     </>,
     polymorph: <>
       <path d="M16 24Q52 30 76 54M144 28Q104 32 76 54"/>
@@ -136,8 +159,9 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <path d="M16 50Q96 46 144 12"/>
       <path className="hatch" d="M16 64L144 32"/>
       <path className="accent" d="M52 96Q60 58 78 56Q96 58 104 96"/>
-      <text x="52" y="22">L</text>
+      <circle className="accent-fill" cx="78" cy="56" r="3"/>
       <text x="78" y="84">2S</text>
+      <text x="52" y="22">L</text>
     </>,
     partial: <>
       <path d="M16 26Q50 32 74 54M144 30Q106 34 74 54"/>
@@ -161,6 +185,7 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
       <path className="accent" d="M64 46Q70 22 86 20Q104 22 110 46"/>
       <path d="M40 46H110M110 46Q126 36 144 24"/>
       <path d="M16 70H144"/>
+      <circle className="accent-fill" cx="86" cy="20" r="3"/>
       <text x="87" y="38">2L</text>
       <text x="128" y="14">L</text>
     </>,
