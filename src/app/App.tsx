@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DiagramCanvas } from "../canvas/DiagramCanvas";
 import { createPuzzleSeed, generateRound, type Difficulty, type GeneratedRound } from "../domain/generator";
 import { pointInPolygon, sameLogicalPoint } from "../domain/geometry";
+import { expectedLabels } from "../domain/diagram-notation";
 import { RULE_CATEGORIES, RULE_CONCEPTS, type RuleConcept } from "../domain/concepts";
 import type { ConstructionState, ViewportState } from "../domain/schema";
 import {
@@ -133,12 +134,12 @@ function ConceptGrid({ concepts, onSelect }: { concepts: RuleConcept[]; onSelect
 }
 
 function FoundationSketch({ kind }: { kind: typeof FOUNDATIONS[number]["sketch"] }) {
-  if (kind === "triangle") return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M24 73 80 14l56 59Z"/><circle cx="24" cy="73" r="3"/><circle cx="80" cy="14" r="3"/><circle cx="136" cy="73" r="3"/><circle className="accent-fill" cx="80" cy="52" r="4"/><path className="accent" d="M80 52 24 73M80 52 80 14M80 52l56 21"/></svg>;
-  if (kind === "lever") return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M22 45h116"/><circle cx="42" cy="45" r="4"/><circle className="accent-fill" cx="94" cy="45" r="5"/><circle cx="129" cy="45" r="4"/><text x="36" y="68">α</text><text x="90" y="68">C₀</text><text x="125" y="68">β</text></svg>;
-  if (kind === "melting") return <svg viewBox="0 0 160 88" aria-hidden="true"><path className="axes" d="M20 8V72H140V8"/><path d="M20 30Q32 36 44 54Q56 26 70 22Q86 26 96 58Q118 38 140 28"/><path d="M20 54H70M70 58H140"/><path className="accent" d="M70 22V72"/><circle className="accent-fill" cx="70" cy="22" r="3"/><text x="34" y="18">L</text></svg>;
-  if (kind === "section") return <svg viewBox="0 0 160 88" aria-hidden="true"><path d="M22 72 80 14l58 58Z"/><path d="M51 43q27 16 57 0M51 43 34 61M108 43l18 18"/><path className="accent" d="M51 43 108 43 80 68Z"/></svg>;
-  if (kind === "path") return <svg viewBox="0 0 160 88" aria-hidden="true"><path className="axes" d="M20 8V72H140V8"/><path d="M20 26Q52 32 74 54M140 30Q102 34 74 54"/><path d="M20 54H140"/><path className="accent" d="M46 18Q50 34 60 42Q68 48 74 54"/><circle className="accent-fill" cx="74" cy="54" r="3"/><text x="98" y="20">L</text></svg>;
-  return <svg viewBox="0 0 160 88" aria-hidden="true"><path className="axes" d="M20 8V72H140V8"/><path d="M20 24Q50 30 68 48M140 28Q102 32 68 48"/><path className="accent" d="M20 48H140"/><circle cx="68" cy="48" r="3"/><text x="74" y="18">L</text></svg>;
+  if (kind === "triangle") return <svg viewBox="0 0 160 88" aria-hidden="true"><g className="ink"><path d="M24 73 80 14l56 59Z"/><circle cx="24" cy="73" r="3"/><circle cx="80" cy="14" r="3"/><circle cx="136" cy="73" r="3"/><circle className="accent-fill" cx="80" cy="52" r="4"/><path className="accent" d="M80 52 24 73M80 52 80 14M80 52l56 21"/></g></svg>;
+  if (kind === "lever") return <svg viewBox="0 0 160 88" aria-hidden="true"><g className="ink"><path d="M22 45h116"/><circle cx="42" cy="45" r="4"/><circle className="accent-fill" cx="94" cy="45" r="5"/><circle cx="129" cy="45" r="4"/><text x="36" y="68">α</text><text x="90" y="68">C₀</text><text x="125" y="68">β</text></g></svg>;
+  if (kind === "melting") return <svg viewBox="0 0 160 88" aria-hidden="true"><g className="ink"><path className="axes" d="M20 8V72H140V8"/><path d="M20 30Q32 36 44 54Q56 26 70 22Q86 26 96 58Q118 38 140 28"/><path d="M20 54H70M70 58H140"/><path className="accent" d="M70 22V72"/><circle className="accent-fill" cx="70" cy="22" r="3"/><text x="34" y="18">L</text></g></svg>;
+  if (kind === "section") return <svg viewBox="0 0 160 88" aria-hidden="true"><g className="ink"><path d="M22 72 80 14l58 58Z"/><path d="M51 43q27 16 57 0M51 43 34 61M108 43l18 18"/><path className="accent" d="M51 43 108 43 80 68Z"/></g></svg>;
+  if (kind === "path") return <svg viewBox="0 0 160 88" aria-hidden="true"><g className="ink"><path className="axes" d="M20 8V72H140V8"/><path d="M20 26Q52 32 74 54M140 30Q102 34 74 54"/><path d="M20 54H140"/><path className="accent" d="M46 18Q50 34 60 42Q68 48 74 54"/><circle className="accent-fill" cx="74" cy="54" r="3"/><text x="98" y="20">L</text></g></svg>;
+  return <svg viewBox="0 0 160 88" aria-hidden="true"><g className="ink"><path className="axes" d="M20 8V72H140V8"/><path d="M20 24Q50 30 68 48M140 28Q102 32 68 48"/><path className="accent" d="M20 48H140"/><circle cx="68" cy="48" r="3"/><text x="74" y="18">L</text></g></svg>;
 }
 
 function RulesOverview() {
@@ -196,8 +197,16 @@ export function App() {
   useEffect(() => saveProfile(profile), [profile]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = profile.settings.theme;
+    const systemDark = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : undefined;
+    const apply = () => {
+      document.documentElement.dataset.theme = profile.settings.theme === "system"
+        ? (systemDark?.matches ? "dark" : "light")
+        : profile.settings.theme;
+    };
+    apply();
     document.documentElement.classList.toggle("reduce-motion", profile.settings.reducedMotion);
+    systemDark?.addEventListener("change", apply);
+    return () => systemDark?.removeEventListener("change", apply);
   }, [profile.settings]);
 
   useEffect(() => {
@@ -325,7 +334,11 @@ export function App() {
     setStudyingResult(true);
     commit((current) => ({
       ...pauseTimer(current),
-      cells: current.cells.map((cell) => ({ ...cell, phaseOrder: (solution.expectedFields.find((field) => sameLogicalPoint(field.witnessPoint, cell.labelPoint)) ?? solution.expectedFields.find((field) => pointInPolygon(field.witnessPoint, cell.polygon)))?.expectedAssemblage ?? [] })),
+      cells: current.cells.map((cell) => {
+        const field = solution.expectedFields.find((candidate) => sameLogicalPoint(candidate.witnessPoint, cell.labelPoint))
+          ?? solution.expectedFields.find((candidate) => pointInPolygon(candidate.witnessPoint, cell.polygon));
+        return { ...cell, phaseOrder: field ? expectedLabels(field) : [] };
+      }),
       revealed: true,
       solved: false,
     }));
@@ -349,7 +362,28 @@ export function App() {
   };
 
   return (
-    <main className={`game-shell ${state.solved || state.revealed ? "is-clean" : ""} ${state.solved ? "is-solved" : ""} ${puzzle.expectedFieldCount >= 16 ? "is-large-binary" : ""} ${profile.settings.leftHanded ? "left-handed" : ""}`}>
+    <main className={`game-shell ${state.solved || state.revealed ? "is-clean" : ""} ${state.solved ? "is-solved" : ""} ${difficulty === "hard" ? "is-large-binary" : ""} ${profile.settings.leftHanded ? "left-handed" : ""}`}>
+      {/* Paper-theme print filters, matching photographed ink figures: strokes
+          stay drafted-straight, but edges erode into the paper fibre and ink
+          density varies faintly along the line, like a book reproduction. */}
+      <svg aria-hidden="true" focusable="false" width="0" height="0" style={{ position: "absolute" }}>
+        <defs>
+          <filter id="pen-ink-board" filterUnits="userSpaceOnUse" x="-60" y="-60" width="1120" height="1120">
+            <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" seed="4" result="fibre" />
+            <feDisplacementMap in="SourceGraphic" in2="fibre" scale="1.8" xChannelSelector="R" yChannelSelector="G" result="rough" />
+            <feTurbulence type="fractalNoise" baseFrequency="0.08" numOctaves="2" seed="9" result="density" />
+            <feColorMatrix in="density" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.2 0.2 0.2 0 0.72" result="inkmask" />
+            <feComposite in="rough" in2="inkmask" operator="in" />
+          </filter>
+          <filter id="pen-ink-glyph" filterUnits="userSpaceOnUse" x="-10" y="-10" width="180" height="130">
+            <feTurbulence type="fractalNoise" baseFrequency="1.3" numOctaves="2" seed="4" result="fibre" />
+            <feDisplacementMap in="SourceGraphic" in2="fibre" scale="0.6" xChannelSelector="R" yChannelSelector="G" result="rough" />
+            <feTurbulence type="fractalNoise" baseFrequency="0.2" numOctaves="2" seed="9" result="density" />
+            <feColorMatrix in="density" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.2 0.2 0.2 0 0.72" result="inkmask" />
+            <feComposite in="rough" in2="inkmask" operator="in" />
+          </filter>
+        </defs>
+      </svg>
       {atHome ? (
         <section className="home-screen" aria-label="Main menu">
           <div className="home-menu">
@@ -390,8 +424,8 @@ export function App() {
               onPlacePoint={(roleId, value) => commit((current) => placeOrMovePoint(current, roleId, value))}
               onAddGeometry={(value) => commit((current) => addGeometry(current, value))}
               onUpdateGeometry={(value) => commit((current) => updateGeometry(current, value))}
-              onTogglePhaseInCell={(cellId, phaseId) => commit((current) => togglePhaseInCell(current, cellId, phaseId, puzzle.phases.map((phase) => phase.id)))}
               onSelectPhase={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))}
+              onTogglePhaseInCell={(cellId, phaseId) => commit((current) => togglePhaseInCell(current, cellId, phaseId, puzzle.diagramLabels.map((label) => label.id)))}
               onRemovePhaseFromCell={(cellId, phaseId) => commit((current) => removePhaseFromCell(current, cellId, phaseId))}
               onDeleteGeometry={(geometryId) => commit((current) => deleteGeometry(current, geometryId))}
               onDeletePoint={(pointId) => commit((current) => deletePoint(current, pointId))}
@@ -407,8 +441,9 @@ export function App() {
         {!state.solved && !state.revealed && !failureOpen && (
           <footer className="minimal-control-rail">
             <button className="icon-action" type="button" aria-label="Undo" disabled={history.current.length === 0} onClick={undo}>↶</button>
-            <PhasePalette phases={puzzle.phases} compositions={puzzle.intermediateCompositions} activePhaseId={state.activePhaseId} onSelect={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))} onPointerStart={() => undefined} />
+            <PhasePalette phases={puzzle.diagramLabels} activePhaseId={state.activePhaseId} onSelect={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))} onPointerStart={() => undefined} />
             <button className="clear-all-action" type="button" aria-label="Clear all labels" disabled={!state.cells.some((cell) => cell.phaseOrder.length > 0)} onClick={() => { commit(clearPhaseLabels); announce("All labels cleared"); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 11h10M9 15h6"/><path d="M5 19 19 5"/></svg></button>
+            <button className={`erase-action ${state.activeTool === "erase" ? "is-active" : ""}`} type="button" aria-label="Erase labels" aria-pressed={state.activeTool === "erase"} onClick={() => updateTransient((current) => setTool(current, current.activeTool === "erase" ? "label" : "erase"))}>⌫</button>
             <button className="submit-action" type="button" aria-label="Submit labels" onClick={handleSubmit}>✓</button>
           </footer>
         )}

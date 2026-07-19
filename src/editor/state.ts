@@ -60,6 +60,8 @@ export function createLabelingState(
       control: curve.recommendedControl,
       createdBy: "generated" as const,
       semanticRole: curve.semanticRole,
+      boundaryKind: curve.boundaryKind,
+      compositionSiteId: curve.compositionSiteId,
       fieldBoundary: curve.fieldBoundary,
     })),
     ...solution.invariants.map((invariant, index) => ({
@@ -80,7 +82,7 @@ export function createLabelingState(
     cells: extractFaces(points, geometry),
     activeTool: "label",
     activePointRoleId: undefined,
-    activePhaseId: puzzle.phases[0]?.id,
+    activePhaseId: puzzle.diagramLabels[0]?.id,
   };
 }
 

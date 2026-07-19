@@ -36,7 +36,7 @@ export const defaultProfile = (): PlayerProfile => ({
   version: 1,
   lastDifficulty: "normal",
   onboardingComplete: false,
-  settings: { theme: "dark", reducedMotion: false, leftHanded: false },
+  settings: { theme: "light", reducedMotion: false, leftHanded: false },
   history: [],
 });
 

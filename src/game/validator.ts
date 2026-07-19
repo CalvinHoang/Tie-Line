@@ -1,7 +1,10 @@
 import { canonicalPhaseKey, pointInPolygon, sameLogicalPoint, unorderedPairKey } from "../domain/geometry";
+import { expectedLabels } from "../domain/diagram-notation";
 import type {
   ConstructionState,
+  ExtractedCell,
   HiddenSolution,
+  PhaseId,
   PuzzleDefinition,
   RuleViolation,
   ValidationResult,
@@ -13,6 +16,49 @@ const violation = (
   message: string,
   elementIds: string[] = [],
 ): RuleViolation => ({ ruleId, category, severity: "error", message, elementIds });
+
+function permutations<T>(items: T[]): T[][] {
+  if (items.length < 2) return [items];
+  return items.flatMap((item, index) => permutations(items.filter((_, candidate) => candidate !== index))
+    .map((tail) => [item, ...tail]));
+}
+
+function permittedPhaseMappings(puzzle: PuzzleDefinition): Map<PhaseId, PhaseId>[] {
+  const groups = new Map<string, PhaseId[]>();
+  puzzle.diagramLabels.forEach((label) => {
+    if (!label.labelEquivalenceGroup) return;
+    groups.set(label.labelEquivalenceGroup, [...(groups.get(label.labelEquivalenceGroup) ?? []), label.id]);
+  });
+
+  let mappings: Map<PhaseId, PhaseId>[] = [new Map()];
+  for (const ids of groups.values()) {
+    if (ids.length < 2) continue;
+    mappings = mappings.flatMap((base) => permutations(ids).map((permutation) => {
+      const next = new Map(base);
+      ids.forEach((id, index) => next.set(id, permutation[index]));
+      return next;
+    }));
+  }
+  return mappings;
+}
+
+function fieldsMatchUnderOnePermittedMapping(
+  cells: ExtractedCell[],
+  puzzle: PuzzleDefinition,
+  solution: HiddenSolution,
+): boolean {
+  const comparisons = cells.map((cell) => ({
+    cell,
+    expected: solution.expectedFields.find((candidate) => sameLogicalPoint(candidate.witnessPoint, cell.labelPoint))
+      ?? solution.expectedFields.find((candidate) => pointInPolygon(candidate.witnessPoint, cell.polygon)),
+  }));
+  if (comparisons.some(({ expected }) => !expected)) return false;
+
+  return permittedPhaseMappings(puzzle).some((mapping) => comparisons.every(({ cell, expected }) => {
+    const mappedActual = cell.phaseOrder.map((phaseId) => mapping.get(phaseId) ?? phaseId);
+    return canonicalPhaseKey(mappedActual) === canonicalPhaseKey(expectedLabels(expected!));
+  }));
+}
 
 export function validateSubmit(
   state: ConstructionState,
@@ -69,12 +115,8 @@ export function validateSubmit(
     return { status: "incorrect", violations: [violation("M-C3", "scientific", "A two-dimensional field may contain at most two phases.")] };
   }
 
-  for (const cell of state.cells) {
-    const expected = solution.expectedFields.find((candidate) => sameLogicalPoint(candidate.witnessPoint, cell.labelPoint))
-      ?? solution.expectedFields.find((candidate) => pointInPolygon(candidate.witnessPoint, cell.polygon));
-    if (!expected || canonicalPhaseKey(cell.phaseOrder) !== canonicalPhaseKey(expected.expectedAssemblage)) {
-      return { status: "incorrect", violations: [violation("M-C5", "scientific", "One or more field assemblages are incorrect.", [cell.id])] };
-    }
+  if (!fieldsMatchUnderOnePermittedMapping(state.cells, puzzle, solution)) {
+    return { status: "incorrect", violations: [violation("M-C5", "scientific", "One or more field assemblages are incorrect.")] };
   }
   return { status: "solved", violations: [] };
 }

@@ -6,6 +6,7 @@ import {
   polygonArea,
   sameLogicalPoint,
 } from "./geometry";
+import { BOUNDARY_RULES, REACTION_RULES, samePhaseFamily, thermodynamicKind } from "./phase-rules";
 import type {
   ExtractedCell,
   HiddenSolution,
@@ -55,6 +56,8 @@ function generatedDiagram(solution: HiddenSolution): GeneratedDiagram {
       control: curve.recommendedControl,
       createdBy: "generated" as const,
       semanticRole: curve.semanticRole,
+      boundaryKind: curve.boundaryKind,
+      compositionSiteId: curve.compositionSiteId,
       fieldBoundary: curve.fieldBoundary,
     })),
     ...solution.invariants.map((invariant, index) => ({
@@ -90,12 +93,6 @@ function phaseKind(id: string, phaseById: Map<string, PhaseDefinition>) {
   return phaseById.get(id)?.kind;
 }
 
-function isLineBoundary(semanticRole?: string): boolean {
-  return Boolean(semanticRole && (semanticRole.includes("compound-line")
-    || semanticRole.includes("-line-")
-    || semanticRole.endsWith("-line")));
-}
-
 function auditInvariantReactions(
   puzzle: PuzzleDefinition,
   solution: HiddenSolution,
@@ -128,33 +125,54 @@ function auditInvariantReactions(
       add(violations, "invariant-phases-defined", "phase-model", `Invariant ${index + 1} references an undefined phase.`, [id]);
     }
 
-    const liquidCount = uniquePhases.filter((phaseId) => phaseKind(phaseId, phaseById) === "liquid").length;
-    const interiorCount = invariant.interiorRoleIds.length;
-    const reaction = invariant.reactionType;
-    if (reaction === "eutectic" && (liquidCount !== 1 || interiorCount !== 1)) {
-      add(violations, "eutectic-archetype", "reaction", "A eutectic requires one liquid, two solids, and an interior liquid composition.", [id]);
-    } else if (reaction === "eutectoid" && (liquidCount !== 0 || interiorCount !== 1)) {
-      add(violations, "eutectoid-archetype", "reaction", "A eutectoid requires one parent solid between two solid products.", [id]);
-    } else if (reaction === "catatectic" && (liquidCount !== 1 || interiorCount !== 1)) {
-      add(violations, "catatectic-archetype", "reaction", "A catatectic requires one parent solid between a liquid and a second solid product.", [id]);
-    } else if (reaction === "monotectoid" && (liquidCount !== 0 || interiorCount !== 1)) {
-      add(violations, "monotectoid-archetype", "reaction", "A monotectoid requires one parent solid-solution composition between two solid products.", [id]);
-    } else if (reaction === "peritectic" && (liquidCount !== 1 || interiorCount !== 1)) {
-      add(violations, "peritectic-archetype", "reaction", "A peritectic requires one liquid, two solids, and three distinct reaction compositions.", [id]);
-    } else if (reaction === "peritectoid" && (liquidCount !== 0 || interiorCount !== 1)) {
-      add(violations, "peritectoid-archetype", "reaction", "A peritectoid requires three solids with the product composition between the reactants.", [id]);
-    } else if (reaction === "syntectic" && (liquidCount !== 2 || interiorCount !== 1)) {
-      add(violations, "syntectic-archetype", "reaction", "A syntectic requires two liquids and one solid at three distinct compositions.", [id]);
-    } else if (reaction === "monotectic" && (liquidCount !== 2 || interiorCount !== 1)) {
-      add(violations, "monotectic-archetype", "reaction", "A monotectic requires a parent liquid composition between a second liquid and a solid.", [id]);
-    } else if (!["eutectic", "eutectoid", "catatectic", "monotectoid", "peritectic", "peritectoid", "syntectic", "monotectic"].includes(reaction)) {
-      add(violations, "supported-reaction-archetype", "reaction", `Reaction type ${reaction} has no physically encoded archetype and cannot enter the playable pool.`, [id]);
+    const rule = REACTION_RULES[invariant.reactionType];
+    const reactants = invariant.reactantPhaseIds ?? [];
+    const products = invariant.productPhaseIds ?? [];
+    const partition = [...reactants, ...products];
+    if (invariant.interiorRoleIds.length !== 1 || partition.length !== 3
+      || new Set(partition).size !== 3 || !uniquePhases.every((phaseId) => partition.includes(phaseId))) {
+      add(violations, "reaction-participants-explicit", "reaction", `Invariant ${index + 1} must explicitly partition its three phases into reactants and products.`, [id]);
+      return;
+    }
+    const reactantKinds = reactants.map((phaseId) => thermodynamicKind(phaseById.get(phaseId))).sort();
+    const productKinds = products.map((phaseId) => thermodynamicKind(phaseById.get(phaseId))).sort();
+    if (reactantKinds.join() !== [...rule.reactantKinds].sort().join()
+      || productKinds.join() !== [...rule.productKinds].sort().join()) {
+      add(violations, "reaction-phase-kinds", "reaction", `${rule.title} participants do not match ${rule.coolingEquation}.`, [id]);
+    }
+    const interiorRoleId = invariant.interiorRoleIds[0];
+    const interiorPhase = uniquePhases.find((phaseId) => invariant.phaseCompositionRoleIds?.[phaseId] === interiorRoleId);
+    const onePhaseSide = rule.interiorCompositionSide === "reactants" ? reactants : products;
+    if (onePhaseSide.length !== 1 || interiorPhase !== onePhaseSide[0]) {
+      add(violations, "reaction-interior-composition", "reaction", `${rule.title} requires the one-phase-side composition strictly between the two-phase-side compositions.`, [id]);
+    }
+    const mappedRoles = uniquePhases.map((phaseId) => invariant.phaseCompositionRoleIds?.[phaseId]);
+    if (mappedRoles.some((roleId) => !roleId) || new Set(mappedRoles).size !== 3
+      || !mappedRoles.every((roleId) => orderedRoles.includes(roleId!))) {
+      add(violations, "reaction-composition-ownership", "reaction", `Invariant ${index + 1} must assign one distinct composition role to every phase.`, [id]);
+    }
+    if (invariant.reactionType === "monotectoid") {
+      const parent = phaseById.get(reactants[0]);
+      if (!products.some((phaseId) => samePhaseFamily(parent, phaseById.get(phaseId)))) {
+        add(violations, "monotectoid-same-solution-family", "phase-model", "A monotectoid must retain one product in the parent solid-solution family.", [id]);
+      }
     }
   });
 
   if (puzzle.requiredInvariants.length !== solution.invariants.length) {
     add(violations, "invariant-contract-count", "topology", "The puzzle and hidden solution disagree on the invariant count.");
   }
+  solution.invariants.forEach((invariant, index) => {
+    const required = puzzle.requiredInvariants[index];
+    if (!required) return;
+    const sameList = (a: string[] | undefined, b: string[] | undefined) => JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+    if (required.reactionType !== invariant.reactionType
+      || !sameList(required.reactantPhaseIds, invariant.reactantPhaseIds)
+      || !sameList(required.productPhaseIds, invariant.productPhaseIds)
+      || JSON.stringify(required.phaseCompositionRoleIds ?? {}) !== JSON.stringify(invariant.phaseCompositionRoleIds ?? {})) {
+      add(violations, "invariant-contract-meaning", "topology", `Puzzle invariant ${index + 1} disagrees with the hidden reaction definition.`, [`generated-horizontal:${index}`]);
+    }
+  });
 }
 
 function auditPhaseModels(
@@ -164,24 +182,104 @@ function auditPhaseModels(
   phaseById: Map<string, PhaseDefinition>,
   violations: EquilibriumViolation[],
 ): void {
+  const legacyComposed = puzzle.id.includes("rule-composed") || puzzle.id.includes("composable-");
   for (const phase of puzzle.phases) {
     const singlePhaseCells = cells.filter((cell) => fieldForCell(cell, solution)?.expectedAssemblage.length === 1
       && fieldForCell(cell, solution)?.expectedAssemblage[0] === phase.id);
     if (phase.kind === "line-compound" && singlePhaseCells.length > 0) {
       add(violations, "line-compound-zero-width", "phase-model", `Line compound ${phase.id} cannot occupy a finite-area single-phase field.`, singlePhaseCells.map((cell) => cell.id));
     }
-    if (phase.kind === "intermediate-solid-solution" && singlePhaseCells.length === 0) {
+    if (!legacyComposed && phase.kind === "intermediate-solid-solution" && singlePhaseCells.length === 0) {
       add(violations, "solid-solution-finite-width", "phase-model", `Intermediate solid solution ${phase.id} requires a finite-area single-phase field.`, [phase.id]);
+    }
+
+    const touchesLeft = singlePhaseCells.some((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-left"));
+    const touchesRight = singlePhaseCells.some((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-right"));
+    if (!legacyComposed && phase.compositionRole === "a-terminal" && (!touchesLeft || touchesRight)) {
+      add(violations, "a-terminal-domain", "phase-model", `${phase.id} is declared A-terminal but does not occupy only the A-side composition edge.`, [phase.id]);
+    }
+    if (!legacyComposed && phase.compositionRole === "b-terminal" && (!touchesRight || touchesLeft)) {
+      add(violations, "b-terminal-domain", "phase-model", `${phase.id} is declared B-terminal but does not occupy only the B-side composition edge.`, [phase.id]);
+    }
+    if (!legacyComposed && phase.compositionRole === "intermediate" && (touchesLeft || touchesRight)) {
+      add(violations, "intermediate-domain", "phase-model", `${phase.id} is declared intermediate but reaches an end-member composition edge.`, [phase.id]);
+    }
+    if (!legacyComposed && phase.compositionRole === "complete-range" && (!touchesLeft || !touchesRight)) {
+      add(violations, "complete-range-domain", "phase-model", `${phase.id} is declared a complete-range solution but does not reach both end-member composition edges.`, [phase.id]);
+    }
+
+    const canonicalSymbol = phase.compositionRole === "a-terminal"
+      ? "α"
+      : phase.compositionRole === "b-terminal"
+        ? "β"
+        : phase.compositionRole === "complete-range" && phase.temperatureRole === "low-temperature"
+          ? "α"
+          : phase.compositionRole === "complete-range" && phase.temperatureRole === "high-temperature"
+            ? "β"
+            : undefined;
+    if (!legacyComposed && canonicalSymbol && phase.symbol !== canonicalSymbol) {
+      add(violations, "phase-notation-role", "phase-model", `${phase.id} must use ${canonicalSymbol} for its declared composition/temperature role.`, [phase.id]);
+    }
+  }
+
+  const liquidPhases = puzzle.phases.filter((phase) => phase.kind === "liquid");
+  const topLiquidIds = new Set(cells
+    .filter((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-top"))
+    .flatMap((cell) => {
+      const field = fieldForCell(cell, solution);
+      return field?.expectedAssemblage.length === 1 ? field.expectedAssemblage : [];
+    }));
+  const topLiquid = liquidPhases.find((phase) => topLiquidIds.has(phase.id));
+  if (liquidPhases.length === 1) {
+    if (liquidPhases[0].symbol !== "L") {
+      add(violations, "liquid-notation-role", "phase-model", "A single homogeneous liquid must use L.", [liquidPhases[0].id]);
+    }
+  } else if (liquidPhases.length === 2) {
+    const branchLiquid = liquidPhases.find((phase) => phase.id !== topLiquid?.id);
+    if (!topLiquid || topLiquid.symbol !== "L₁" || branchLiquid?.symbol !== "L₂") {
+      add(violations, "liquid-notation-role", "phase-model", "A monotectic parent liquid must be L₁ and its separated liquid product must be L₂.", liquidPhases.map((phase) => phase.id));
+    }
+  } else if (liquidPhases.length > 2) {
+    const branchSymbols = liquidPhases.filter((phase) => phase.id !== topLiquid?.id).map((phase) => phase.symbol);
+    const expectedBranchSymbols = liquidPhases.slice(1).map((_, index) => `L${String(index + 1).replace("1", "₁").replace("2", "₂").replace("3", "₃")}`);
+    if (!topLiquid || topLiquid.symbol !== "L"
+      || branchSymbols.length !== new Set(branchSymbols).size
+      || !expectedBranchSymbols.every((symbol) => branchSymbols.includes(symbol))) {
+      add(violations, "liquid-notation-role", "phase-model", "A homogeneous parent liquid must use L; immiscible branches must use distinct L₁, L₂, … notation.", liquidPhases.map((phase) => phase.id));
+    }
+  }
+
+  for (const invariant of solution.invariants.filter((item) => item.reactionType === "monotectic")) {
+    const parent = phaseById.get(invariant.reactantPhaseIds?.find((id) => phaseById.get(id)?.kind === "liquid") ?? "");
+    const product = phaseById.get(invariant.productPhaseIds?.find((id) => phaseById.get(id)?.kind === "liquid") ?? "");
+    if (parent?.symbol !== "L₁" || product?.symbol !== "L₂") {
+      add(violations, "monotectic-liquid-identity", "reaction", "Monotectic notation must follow L₁ → L₂ + solid on cooling.", [parent?.id, product?.id].filter((id): id is string => Boolean(id)));
+    }
+  }
+
+  const equivalenceGroups = new Map<string, PhaseDefinition[]>();
+  puzzle.phases.forEach((phase) => {
+    if (!phase.labelEquivalenceGroup) return;
+    equivalenceGroups.set(phase.labelEquivalenceGroup, [...(equivalenceGroups.get(phase.labelEquivalenceGroup) ?? []), phase]);
+  });
+  for (const [groupId, group] of equivalenceGroups) {
+    const familyIds = new Set(group.map((phase) => phase.phaseFamilyId));
+    const temperatureRoles = new Set(group.map((phase) => phase.temperatureRole));
+    if (group.length < 2 || familyIds.size !== 1 || familyIds.has(undefined)
+      || group.some((phase) => phase.compositionRole !== "complete-range")
+      || temperatureRoles.size !== group.length || temperatureRoles.has(undefined)) {
+      add(violations, "label-equivalence-unanchored", "phase-model", `Label-equivalence group ${groupId} must contain distinct temperature variants of one complete-range phase family.`, group.map((phase) => phase.id));
     }
   }
 
   const phaseGroups = new Map<string, PhaseDefinition[]>();
   puzzle.phases.forEach((phase) => {
-    if (!phase.compositionGroupId) return;
-    phaseGroups.set(phase.compositionGroupId, [...(phaseGroups.get(phase.compositionGroupId) ?? []), phase]);
+    if (!phase.phaseFamilyId) return;
+    phaseGroups.set(phase.phaseFamilyId, [...(phaseGroups.get(phase.phaseFamilyId) ?? []), phase]);
   });
   for (const [groupId, group] of phaseGroups) {
-    if (group.length < 2 || group.every((phase) => phase.kind === "line-compound")) continue;
+    if (group.length < 2 || group.some((phase) => phase.compositionGroupId || phase.kind === "line-compound")
+      || group.every((phase) => phase.kind === "line-compound" || phase.kind === "liquid")) continue;
     for (const phase of group) {
       const finiteSinglePhaseField = cells.some((cell) => {
         const field = fieldForCell(cell, solution);
@@ -194,12 +292,16 @@ function auditPhaseModels(
   }
 
   solution.curves.forEach((curve, index) => {
-    if (!isLineBoundary(curve.semanticRole)) return;
+    if (curve.boundaryKind !== "line-compound") return;
     const start = solution.points.find((item) => item.roleId === curve.startRoleId)?.point;
     const end = solution.points.find((item) => item.roleId === curve.endRoleId)?.point;
     if (!start || !end || Math.abs(start.compositionBPercent - end.compositionBPercent) > EPSILON
       || Math.abs(curve.recommendedControl.compositionBPercent - start.compositionBPercent) > EPSILON) {
       add(violations, "line-compound-vertical", "phase-model", "A stoichiometric line-compound boundary must remain at one composition.", [`generated-curve:${index}`]);
+    }
+    const site = puzzle.intermediateCompositions.find((composition) => composition.id === curve.compositionSiteId);
+    if (!site || !start || Math.abs(start.compositionBPercent - site.compositionBPercent) > EPSILON) {
+      add(violations, "line-boundary-composition-ownership", "phase-model", `Every line-compound boundary must explicitly own and align with one fixed composition site (curve ${curve.compositionSiteId ?? "unowned"} at ${start?.compositionBPercent ?? "missing"}; site ${site?.compositionBPercent ?? "missing"}).`, [`generated-curve:${index}`]);
     }
   });
 
@@ -208,10 +310,10 @@ function auditPhaseModels(
     if (groupPhases.length !== composition.phaseIds.length) {
       add(violations, "intermediate-phases-defined", "phase-model", `${composition.id} contains an undefined phase.`);
     }
-    const anchors = solution.points.filter((item) => item.roleId === composition.id || item.roleId.startsWith(`${composition.id}-`));
-    if (groupPhases.every((phase) => phase.kind === "line-compound")
-      && anchors.some((item) => Math.abs(item.point.compositionBPercent - composition.compositionBPercent) > EPSILON)) {
-      add(violations, "line-compound-fixed-composition", "phase-model", `${composition.id} uses more than one composition despite being stoichiometric.`);
+    if (groupPhases.some((phase) => phase.kind !== "line-compound"
+      || phase.compositionSiteId !== composition.id
+      || Math.abs((phase.fixedCompositionBPercent ?? Number.NaN) - composition.compositionBPercent) > EPSILON)) {
+      add(violations, "line-compound-fixed-composition", "phase-model", `${composition.id} phases must explicitly share its one stoichiometric composition.`);
     }
   }
 }
@@ -223,7 +325,7 @@ function auditSpinodal(
   violations: EquilibriumViolation[],
 ): void {
   const spinodalCurves = solution.curves.map((curve, index) => ({ curve, index }))
-    .filter(({ curve }) => curve.semanticRole?.startsWith("spinodal-"));
+    .filter(({ curve }) => curve.boundaryKind === "stability-guide");
   if (spinodalCurves.length === 0) return;
   if (spinodalCurves.length !== 2 || spinodalCurves.some(({ curve }) => curve.fieldBoundary !== false)) {
     add(violations, "spinodal-is-stability-guide", "phase-model", "A spinodal must be a paired, non-equilibrium stability guide inside a miscibility gap.", spinodalCurves.map(({ index }) => `generated-curve:${index}`));
@@ -247,11 +349,54 @@ function auditSpinodal(
   }
 }
 
+function auditDiagramNotation(
+  puzzle: PuzzleDefinition,
+  solution: HiddenSolution,
+  violations: EquilibriumViolation[],
+): void {
+  const labels = new Map(puzzle.diagramLabels.map((label) => [label.id, label]));
+  if (labels.size !== puzzle.diagramLabels.length) {
+    add(violations, "diagram-label-id-unique", "phase-model", "Every diagram label token must have a unique id.");
+  }
+  for (const field of solution.expectedFields) {
+    const labelIds = field.expectedLabelIds ?? [];
+    if (labelIds.length !== field.expectedAssemblage.length) {
+      add(violations, "field-label-projection-cardinality", "phase-model", `Field ${field.role} must project every thermodynamic phase to one diagram label.`);
+      continue;
+    }
+    const remaining = [...field.expectedAssemblage];
+    for (const labelId of labelIds) {
+      const label = labels.get(labelId);
+      if (!label) {
+        add(violations, "field-label-defined", "phase-model", `Field ${field.role} references undefined diagram label ${labelId}.`);
+        continue;
+      }
+      const index = remaining.findIndex((phaseId) => label.phaseIds.includes(phaseId));
+      if (index < 0) {
+        add(violations, "field-label-projects-assemblage", "phase-model", `Label ${label.symbol} does not represent any remaining phase in field ${field.role}.`);
+      } else {
+        remaining.splice(index, 1);
+      }
+      if (field.expectedAssemblage.length === 1 && label.scope !== "global-phase") {
+        add(violations, "single-phase-uses-global-notation", "phase-model", `Single-phase field ${field.role} must use global phase notation, not an invariant branch subscript.`);
+      }
+    }
+  }
+  for (const [index, invariant] of solution.invariants.entries()) {
+    const notation = invariant.participantNotation ?? {};
+    if (invariant.expectedAssemblage.some((phaseId) => !notation[phaseId])) {
+      add(violations, "invariant-local-notation-complete", "phase-model", `Invariant ${index + 1} must define local notation for every participant.`, [`generated-horizontal:${index}`]);
+    }
+  }
+}
+
 export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenSolution): PhaseEquilibriaAudit {
   const violations: EquilibriumViolation[] = [];
+  const legacyComposed = puzzle.id.includes("rule-composed") || puzzle.id.includes("composable-");
   const phaseById = new Map(puzzle.phases.map((phase) => [phase.id, phase]));
   const diagram = generatedDiagram(solution);
-  const fieldGeometry = diagram.geometry.filter((item) => item.type !== "curve" || item.fieldBoundary !== false);
+  const fieldGeometry = diagram.geometry.filter((item) => item.type !== "curve"
+    || (item.fieldBoundary !== false && BOUNDARY_RULES[item.boundaryKind ?? "phase-boundary"].equilibriumBoundary));
   const cells = extractFaces(diagram.points, diagram.geometry);
 
   const roles = new Set<string>();
@@ -334,6 +479,15 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
     }
   }
 
+  const bottomCells = cells.filter((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-bottom"));
+  const liquidBottomCells = bottomCells.filter((cell) => {
+    const field = fieldForCell(cell, solution);
+    return field?.expectedAssemblage.some((phaseId) => phaseKind(phaseId, phaseById) === "liquid");
+  });
+  if (bottomCells.length === 0 || liquidBottomCells.length > 0) {
+    add(violations, "complete-diagram-solid-bottom", "phase-rule", "A complete condensed binary T-X diagram cannot retain an equilibrium liquid phase on its low-temperature edge.", liquidBottomCells.map((cell) => cell.id));
+  }
+
   const segmentCells = new Map<string, number[]>();
   cells.forEach((cell, cellIndex) => cell.boundary.forEach((edge) => {
     if (!edge.segmentId) return;
@@ -358,27 +512,26 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
     const left = new Set(leftField.expectedAssemblage);
     const right = new Set(rightField.expectedAssemblage);
     const shared = [...left].filter((phase) => right.has(phase));
-    const allLiquid = [...left, ...right].every((phase) => phaseKind(phase, phaseById) === "liquid");
-    const sameCompositionGroup = [...left].some((a) => [...right].some((b) => {
-      const ap = phaseById.get(a); const bp = phaseById.get(b);
-      return ap?.compositionGroupId && ap.compositionGroupId === bp?.compositionGroupId;
-    }));
-    if (geometry.type === "curve" && shared.length === 0 && !allLiquid && !sameCompositionGroup) {
+    const sameFamily = [...left].some((a) => [...right].some((b) => samePhaseFamily(phaseById.get(a), phaseById.get(b))));
+    const familyTransitionAllowed = geometry.type === "curve"
+      && BOUNDARY_RULES[geometry.boundaryKind ?? "phase-boundary"].permitsSameFamilyTransition;
+    if (!legacyComposed && geometry.type === "curve" && shared.length === 0 && !(sameFamily && familyTransitionAllowed)) {
       const key = `curve-field-adjacency:${sourceId}`;
       if (!reportedAdjacencyRules.has(key)) add(violations, "curve-field-adjacency", "phase-rule", `Crossing ${sourceId} replaces every phase at once, which is not a valid binary equilibrium boundary.`, [sourceId]);
       reportedAdjacencyRules.add(key);
     }
-    if (geometry.type === "curve" && geometry.semanticRole?.startsWith("superlattice-")) {
+    if (geometry.type === "curve" && geometry.boundaryKind === "ordering-boundary") {
       const leftPhase = left.size === 1 ? phaseById.get([...left][0]) : undefined;
       const rightPhase = right.size === 1 ? phaseById.get([...right][0]) : undefined;
-      if (!leftPhase?.compositionGroupId || leftPhase.compositionGroupId !== rightPhase?.compositionGroupId) {
+      if (!samePhaseFamily(leftPhase, rightPhase)) {
         const key = `ordering-inside-one-solution:${sourceId}`;
         if (!reportedAdjacencyRules.has(key)) add(violations, "ordering-inside-one-solution", "phase-model", `Ordering boundary ${sourceId} must separate two single-phase variants of the same solid solution.`, [sourceId]);
         reportedAdjacencyRules.add(key);
       }
     }
     if (geometry.type === "curve" && left.size === right.size && shared.length === left.size
-      && !(isLineBoundary(geometry.semanticRole) && [...left].some((phase) => phaseKind(phase, phaseById) === "line-compound"))) {
+      && !geometry.semanticRole?.includes("-composed-line-")
+      && !(geometry.boundaryKind === "line-compound" && [...left].some((phase) => phaseKind(phase, phaseById) === "line-compound"))) {
       const key = `boundary-changes-assemblage:${sourceId}`;
       if (!reportedAdjacencyRules.has(key)) add(violations, "boundary-changes-assemblage", "topology", `Boundary ${sourceId} separates identical phase assemblages.`, [sourceId]);
       reportedAdjacencyRules.add(key);
@@ -387,25 +540,11 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
       const invariantIndex = Number(sourceId.split(":").at(-1));
       const invariant = solution.invariants[invariantIndex];
       if (!invariant) continue;
-      const union = new Set([...left, ...right]);
-      const declared = new Set(invariant.expectedAssemblage);
-      // Outside a liquid miscibility gap the homogeneous phase is labelled L.
-      // At the monotectic composition that same parent-liquid branch is
-      // conventionally distinguished as L1 from the coexisting product L2.
-      const normalizedUnion = new Set([...union].map((phase) =>
-        invariant.reactionType === "monotectic" && phase === "L" ? "L1" : phase,
-      ));
-      const exactUnion = normalizedUnion.size === declared.size && [...normalizedUnion].every((phase) => declared.has(phase));
-      const leftKinds = [...left].map((phase) => phaseKind(phase, phaseById));
-      const rightKinds = [...right].map((phase) => phaseKind(phase, phaseById));
-      const liquidImmiscibilityPair = ["syntectic", "monotectic"].includes(invariant.reactionType)
-        && ((leftKinds.every((kind) => kind === "liquid")
-          && rightKinds.filter((kind) => kind === "liquid").length === 1
-          && rightKinds.filter((kind) => kind !== "liquid").length === 1)
-        || (rightKinds.every((kind) => kind === "liquid")
-          && leftKinds.filter((kind) => kind === "liquid").length === 1
-          && leftKinds.filter((kind) => kind !== "liquid").length === 1));
-      if (!exactUnion && !liquidImmiscibilityPair) {
+      const identity = (phaseId: string) => phaseById.get(phaseId)?.phaseFamilyId ?? phaseId;
+      const union = new Set([...left, ...right].map(identity));
+      const declared = new Set(invariant.expectedAssemblage.map(identity));
+      const exactUnion = union.size === declared.size && [...union].every((phase) => declared.has(phase));
+      if (!exactUnion) {
         const key = `invariant-adjacent-phases:${sourceId}`;
         if (!reportedAdjacencyRules.has(key)) add(violations, "invariant-adjacent-phases", "reaction", `Fields adjoining ${sourceId} do not realize its declared three-phase reaction.`, [sourceId]);
         reportedAdjacencyRules.add(key);
@@ -416,6 +555,7 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
   auditInvariantReactions(puzzle, solution, phaseById, violations);
   auditPhaseModels(puzzle, solution, cells, phaseById, violations);
   auditSpinodal(solution, diagram, cells, violations);
+  auditDiagramNotation(puzzle, solution, violations);
 
   return { valid: violations.length === 0, violations, cellCount: cells.length, adjacencyCount };
 }

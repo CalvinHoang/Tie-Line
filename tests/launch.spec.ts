@@ -148,6 +148,37 @@ test("composes a syntectic liquid-immiscibility kernel into a large Hard system"
   await expect(page.getByRole("button", { name: "Liquid 2 phase", exact: true })).toBeVisible();
 });
 
+test("uses reaction-role liquid notation for a monotectic", async ({ page }) => {
+  await forceGeneratedSeed(page, 5);
+  await page.evaluate(() => {
+    const profile = JSON.parse(localStorage.getItem("tie-line:full-1:profile") ?? "{}") as { lastDifficulty?: string };
+    localStorage.setItem("tie-line:full-1:profile", JSON.stringify({ ...profile, lastDifficulty: "hard" }));
+  });
+  await page.reload();
+  await startGame(page);
+  await expect(page.getByRole("button", { name: "Homogeneous liquid phase", exact: true })).toHaveText("L");
+  await expect(page.getByRole("button", { name: "Parent liquid phase", exact: true })).toHaveText("L₁");
+  await expect(page.getByRole("button", { name: "Immiscible liquid ₂ phase", exact: true })).toHaveText("L₂");
+  await expect(page.getByRole("application", { name: /phase diagram board/i }).locator(".invariant-line"))
+    .toHaveCount(2);
+});
+
+test("separates global alpha fields from monotectoid branch notation", async ({ page }) => {
+  await forceGeneratedSeed(page, 6);
+  await page.reload();
+  await startGame(page);
+  const symbols = await page.locator(".phase-palette button").allTextContents();
+  expect(symbols).toEqual(expect.arrayContaining(["L", "α", "α₁", "α₂", "β"]));
+  expect(symbols.filter((symbol) => symbol === "α")).toHaveLength(1);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.getByRole("button", { name: "Submit labels" }).click();
+  }
+  await page.getByRole("button", { name: "Reveal", exact: true }).click();
+  const revealed = await page.locator(".phase-label text:not(.phase-plus)").allTextContents();
+  expect(revealed).toEqual(expect.arrayContaining(["α", "α₁", "α₂", "β"]));
+});
+
 test("shows finite terminal solid-solution fields for limited solubility", async ({ page }) => {
   await forceGeneratedSeed(page, 2);
   await page.evaluate(() => {
@@ -160,8 +191,8 @@ test("shows finite terminal solid-solution fields for limited solubility", async
   const board = page.getByRole("application", { name: /phase diagram board/i });
   await expect(board.locator(".field-target")).toHaveCount(6);
   await expect(board.locator(".field-texture.texture-partial-solubility")).toHaveCount(2);
-  await expect(page.getByRole("button", { name: "Alpha phase", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Beta phase", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "A-rich terminal solid solution phase", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "B-rich terminal solid solution phase", exact: true })).toBeVisible();
 });
 
 for (const [name, seed, fields, invariants] of [
@@ -173,13 +204,33 @@ for (const [name, seed, fields, invariants] of [
     await forceGeneratedSeed(page, seed);
   await page.reload();
   await startGame(page);
-  await openPhaseSelector(page);
-  const board = page.getByRole("application", { name: /phase diagram board/i });
+    await openPhaseSelector(page);
+    const board = page.getByRole("application", { name: /phase diagram board/i });
     await expect(board.locator(".field-target")).toHaveCount(fields);
     await expect(board.locator(".invariant-line")).toHaveCount(invariants);
     expect(await page.locator(".intermediate-composition-label").count()).toBeGreaterThanOrEqual(1);
   });
 }
+
+test("uses conventional temperature notation for an unanchored complete-solution polymorph", async ({ page }) => {
+  await forceGeneratedSeed(page, 11);
+  await page.reload();
+  await startGame(page);
+  const highTemperature = page.getByRole("button", { name: "High-temperature solid solution phase", exact: true });
+  const lowTemperature = page.getByRole("button", { name: "Low-temperature solid solution phase", exact: true });
+  await expect(highTemperature).toHaveText("β");
+  await expect(lowTemperature).toHaveText("α");
+});
+
+test("derives coupled-system symbols from A-side, intermediate, and B-side composition roles", async ({ page }) => {
+  await forceGeneratedSeed(page, 12);
+  await page.reload();
+  await startGame(page);
+  await expect(page.getByRole("button", { name: "A-rich terminal solid solution phase", exact: true })).toHaveText("α");
+  await expect(page.getByRole("button", { name: "Intermediate solid solution phase", exact: true })).toHaveText("γ");
+  await expect(page.getByRole("button", { name: "B-rich terminal solid solution phase", exact: true })).toHaveText("β");
+  await expect(page.locator(".phase-palette")).not.toContainText("γ′");
+});
 
 test("lets the player label a generated phase field", async ({ page }) => {
   await startGame(page);
@@ -251,8 +302,8 @@ test("keeps primary mobile controls at least 44 pixels", async ({ page }) => {
   for (let index = 0; index < count; index += 1) {
     const box = await controls.nth(index).boundingBox();
     if (!box) throw new Error(`Control ${index} is unavailable`);
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 });
 

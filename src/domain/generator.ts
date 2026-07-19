@@ -1,6 +1,11 @@
 import { extractFaces } from "../canvas/face-extraction";
+import { applyDiagramNotation } from "./diagram-notation";
 import { pointInPolygon, polygonArea, sameLogicalPoint } from "./geometry";
 import { assertPhaseEquilibria, auditPhaseEquilibria } from "./phase-equilibria-validator";
+import { adaptPhaseIdentities } from "./phase-identity-adapter";
+import { boundaryKindForRole, REACTION_RULES } from "./phase-rules";
+import { auditRoundThermodynamicRealizability } from "./round-thermodynamic-audit";
+import { assemblePhaseTopology } from "./topology-assembler";
 import type {
   ExpectedFieldSpec,
   HiddenSolution,
@@ -10,6 +15,7 @@ import type {
   PlayerPoint,
   PuzzleDefinition,
   RequiredInvariantSpec,
+  ReactionType,
   SolutionCurve,
 } from "./schema";
 
@@ -30,9 +36,12 @@ export type DiagramFamily =
   | "degenerate-eutectic"
   | "peritectic"
   | "peritectoid"
+  | "eutectoid"
+  | "monotectoid"
+  | "metatectic"
   | "syntectic"
   | "subsolidus-polymorph"
-  | "supersolidus-polymorph"
+  | "coupled-eutectic-peritectic"
   | "superlattice"
   | "triple-eutectic"
   | "large-multi-invariant"
@@ -52,7 +61,34 @@ export interface GeneratedRound {
   intermediatePhaseCount?: number;
   criticalPointCount?: number;
   layoutQualityScore?: number;
+  thermodynamicCertificate?: {
+    scope: "local-invariant-realizability";
+    certifiedInvariantCount: number;
+  };
+  topologyCertificate?: {
+    schemaVersion: "phase-topology-v1";
+    certifiedInvariantTypes: string[];
+    certifiedInvariantCount: number;
+    scope: "generated-diagram";
+  };
+  generationContract?: {
+    ruleId: string;
+    weight: number;
+    targetPercent: number;
+    requiredInvariantTypes: ReactionType[];
+    requiredInvariantCounts: Partial<Record<ReactionType, number>>;
+    requiredFeatures: GenerationFeature[];
+  };
 }
+
+export type GenerationFeature =
+  | "compound"
+  | "partial-solubility"
+  | "polymorphism"
+  | "ordering"
+  | "liquid-immiscibility"
+  | "spinodal"
+  | "intermediate-phase";
 
 const point = (compositionBPercent: number, temperatureCelsius: number): LogicalPoint => ({ compositionBPercent, temperatureCelsius });
 
@@ -100,6 +136,8 @@ function generatedGeometry(solution: HiddenSolution): { points: PlayerPoint[]; g
       control: curve.recommendedControl,
       createdBy: "generated" as const,
       semanticRole: curve.semanticRole,
+      boundaryKind: curve.boundaryKind ?? boundaryKindForRole(curve.semanticRole),
+      compositionSiteId: curve.compositionSiteId,
       fieldBoundary: curve.fieldBoundary,
     })),
     ...solution.invariants.map((invariant, index) => ({
@@ -126,14 +164,16 @@ function deriveExpectedFields(
     const match = classify(cell.labelPoint, new Set(cell.boundary.map((item) => item.geometryId)));
     return { role: match.role, expectedAssemblage: match.phases, witnessPoint: cell.labelPoint, texture: match.texture };
   });
-  if (expectedCount !== undefined && fields.length !== expectedCount) throw new Error(`${solution.puzzleId} produced ${fields.length} fields; expected ${expectedCount}.`);
+  if (expectedCount !== undefined && fields.length !== expectedCount) {
+    throw new Error(`${solution.puzzleId} produced ${fields.length} fields (${fields.map((field) => field.role).join(", ")}); expected ${expectedCount}.`);
+  }
   return fields;
 }
 
 const phases = (compound = false): PhaseDefinition[] => [
   { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
   { id: "alpha", symbol: "α", name: "Alpha", kind: "terminal-solid", required: true },
-  ...(compound ? [{ id: "gamma", symbol: "γ", name: "Intermediate compound", kind: "line-compound" as const, required: true, compositionGroupId: "gamma" }] : []),
+  ...(compound ? [{ id: "gamma", symbol: "γ", name: "Intermediate compound", kind: "line-compound" as const, required: true, compositionSiteId: "gamma", fixedCompositionBPercent: 50 }] : []),
   { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
 ];
 
@@ -180,18 +220,36 @@ function intermediateRules(
   endMemberLabels: PuzzleDefinition["endMemberLabels"],
 ): { phases: PhaseDefinition[]; intermediateCompositions: PuzzleDefinition["intermediateCompositions"] } {
   const groupedPhases = new Map<string, PhaseDefinition[]>();
-  inventory.filter((phase) => phase.kind === "line-compound" || phase.kind === "intermediate-solid-solution").forEach((phase) => {
-    const groupId = phase.compositionGroupId ?? phase.id;
+  inventory.filter((phase) => phase.kind === "line-compound").forEach((phase) => {
+    const groupId = phase.compositionSiteId ?? phase.compositionGroupId ?? phase.id;
     groupedPhases.set(groupId, [...(groupedPhases.get(groupId) ?? []), phase]);
   });
+  const phaseById = new Map(inventory.map((phase) => [phase.id, phase]));
+  const pointByRole = new Map(solution.points.map((item) => [item.roleId, item.point]));
+  const inferredComposition = (phaseId: string): number | undefined => {
+    for (const invariant of solution.invariants) {
+      if (!invariant.expectedAssemblage.includes(phaseId)) continue;
+      const rule = REACTION_RULES[invariant.reactionType];
+      const interiorPhaseId = rule.interiorPhaseSelection === "only-liquid"
+        ? invariant.expectedAssemblage.find((id) => phaseById.get(id)?.kind === "liquid")
+        : rule.interiorPhaseSelection === "only-solid"
+          ? invariant.expectedAssemblage.find((id) => phaseById.get(id)?.kind !== "liquid")
+          : invariant.expectedAssemblage[1];
+      const outerPhaseIds = invariant.expectedAssemblage.filter((id) => id !== interiorPhaseId);
+      const roleId = phaseId === interiorPhaseId
+        ? invariant.interiorRoleIds[0]
+        : phaseId === outerPhaseIds[0] ? invariant.startRoleId : invariant.endRoleId;
+      const point = pointByRole.get(roleId);
+      if (point) return point.compositionBPercent;
+    }
+    return undefined;
+  };
   const groups = [...groupedPhases].map(([id, groupPhases]) => {
-    const candidates = solution.points
-      .filter((item) => item.roleId === id || item.roleId.startsWith(`${id}-`))
-      .map((item) => item.point.compositionBPercent);
-    if (candidates.length === 0) throw new Error(`${solution.puzzleId} has no composition anchor for intermediate group ${id}.`);
-    const counts = new Map<number, number>();
-    candidates.forEach((composition) => counts.set(composition, (counts.get(composition) ?? 0) + 1));
-    const compositionBPercent = [...counts].sort((a, b) => b[1] - a[1])[0][0];
+    const siteCurve = solution.curves.find((curve) => curve.compositionSiteId === id);
+    const siteCurveComposition = siteCurve ? pointByRole.get(siteCurve.startRoleId)?.compositionBPercent : undefined;
+    const compositions = [...new Set(groupPhases.map((phase) => siteCurveComposition ?? phase.fixedCompositionBPercent ?? inferredComposition(phase.id)))];
+    if (compositions.length !== 1 || compositions[0] === undefined) throw new Error(`${solution.puzzleId} has no unique fixed composition for intermediate site ${id}.`);
+    const compositionBPercent = compositions[0];
     return { id, phases: groupPhases, compositionBPercent };
   }).sort((a, b) => a.compositionBPercent - b.compositionBPercent);
 
@@ -213,7 +271,8 @@ function intermediateRules(
       ...phase,
       symbol: `${baseSymbol}${"′".repeat(variantIndex)}`,
       name: variantIndex === 0 ? `${composition.label} intermediate` : `${composition.label} intermediate polymorph ${variantIndex + 1}`,
-      compositionGroupId: composition.id,
+      compositionSiteId: composition.id,
+      fixedCompositionBPercent: composition.compositionBPercent,
     };
   });
   return { phases: phasesWithRules, intermediateCompositions };
@@ -228,10 +287,39 @@ function puzzleFrom(
   phaseInventory?: PhaseDefinition[],
   endMemberLabels: PuzzleDefinition["endMemberLabels"] = { left: "A", right: "B" },
 ): PuzzleDefinition {
+  solution.curves.forEach((curve) => { curve.boundaryKind ??= boundaryKindForRole(curve.semanticRole); });
+  solution.invariants.forEach((invariant) => {
+    const orderedRoles = [invariant.startRoleId, ...invariant.interiorRoleIds, invariant.endRoleId];
+    if (orderedRoles.length !== invariant.expectedAssemblage.length) {
+      throw new Error(`${solution.puzzleId} cannot assign phase compositions to ${invariant.reactionType}.`);
+    }
+    const rule = REACTION_RULES[invariant.reactionType];
+    const inventory = phaseInventory ?? phases(solution.points.some((item) => item.roleId === "gamma" || item.roleId.startsWith("gamma-")));
+    const phaseById = new Map(inventory.map((phase) => [phase.id, phase]));
+    const interiorPhaseId = rule.interiorPhaseSelection === "only-liquid"
+      ? invariant.expectedAssemblage.find((phaseId) => phaseById.get(phaseId)?.kind === "liquid")
+      : rule.interiorPhaseSelection === "only-solid"
+        ? invariant.expectedAssemblage.find((phaseId) => phaseById.get(phaseId)?.kind !== "liquid")
+        : invariant.expectedAssemblage[1];
+    if (!interiorPhaseId) throw new Error(`${solution.puzzleId} cannot identify the interior phase for ${invariant.reactionType}.`);
+    const outerPhaseIds = invariant.expectedAssemblage.filter((phaseId) => phaseId !== interiorPhaseId);
+    invariant.phaseCompositionRoleIds = {
+      [outerPhaseIds[0]]: orderedRoles[0],
+      [interiorPhaseId]: invariant.interiorRoleIds[0],
+      [outerPhaseIds[1]]: orderedRoles.at(-1)!,
+    };
+    if (rule.interiorCompositionSide === "reactants") {
+      invariant.reactantPhaseIds = [interiorPhaseId];
+      invariant.productPhaseIds = invariant.expectedAssemblage.filter((phaseId) => phaseId !== interiorPhaseId);
+    } else {
+      invariant.productPhaseIds = [interiorPhaseId];
+      invariant.reactantPhaseIds = invariant.expectedAssemblage.filter((phaseId) => phaseId !== interiorPhaseId);
+    }
+  });
   const compound = solution.points.some((item) => item.roleId === "gamma" || item.roleId.startsWith("gamma-"));
   const ruledInventory = intermediateRules(seed, solution, phaseInventory ?? phases(compound), endMemberLabels);
   return {
-    schemaVersion: "tie-line-labels-2",
+    schemaVersion: "tie-line-labels-3",
     id: solution.puzzleId,
     title: familyLabel,
     compositionMinPercentB: 0,
@@ -241,6 +329,15 @@ function puzzleFrom(
     endMemberLabels,
     intermediateCompositions: ruledInventory.intermediateCompositions,
     phases: ruledInventory.phases,
+    diagramLabels: ruledInventory.phases.map((phase) => ({
+      id: phase.id,
+      symbol: phase.symbol,
+      name: phase.name,
+      phaseIds: [phase.id],
+      scope: "global-phase" as const,
+      colorPhaseId: phase.id,
+      labelEquivalenceGroup: phase.labelEquivalenceGroup,
+    })),
     pointRoles: solution.points.map(({ roleId, point: anchor }) => ({
       id: roleId,
       symbol: roleId,
@@ -261,15 +358,19 @@ function puzzleFrom(
       startRoleId: curve.startRoleId,
       endRoleId: curve.endRoleId,
       semanticRole: curve.semanticRole ?? "phase-boundary",
+      boundaryKind: curve.boundaryKind ?? boundaryKindForRole(curve.semanticRole),
+      compositionSiteId: curve.compositionSiteId,
     })),
-    requiredInvariants,
+    requiredInvariants: requiredInvariants.map((required, index) => ({ ...required, ...solution.invariants[index] })),
     expectedFieldCount: solution.expectedFields.length,
     expectedFields: solution.expectedFields,
     allowExtraGeometryOnSubmit: false,
   };
 }
 
-function generateSimple(seed: number, degenerate = false): GeneratedRound {
+function generateSimple(seed: number, difficultyOrDegenerate: Difficulty | boolean = "easy"): GeneratedRound {
+  const degenerate = typeof difficultyOrDegenerate === "boolean" ? difficultyOrDegenerate : false;
+  const difficulty = typeof difficultyOrDegenerate === "string" ? difficultyOrDegenerate : "easy";
   const random = randomForSeed(seed);
   const ex = degenerate
     ? (((seed >>> 5) & 1) === 0 ? integer(random, 3, 8) : integer(random, 92, 97))
@@ -299,9 +400,9 @@ function generateSimple(seed: number, degenerate = false): GeneratedRound {
     if (boundaries.has("frame-left")) return { role: "liquid-alpha", phases: ["L", "alpha"] };
     return { role: "liquid-beta", phases: ["L", "beta"] };
   }, 4);
-  const requiredInvariants: RequiredInvariantSpec[] = [{ startRoleId: "left-eut", endRoleId: "right-eut", interiorRoleIds: ["eutectic"], expectedAssemblage: ["L", "alpha", "beta"], reactionType: "eutectic" }];
   const family: DiagramFamily = degenerate ? "degenerate-eutectic" : "simple-eutectic";
-  return { seed, difficulty: "easy", family, solution, puzzle: puzzleFrom(seed, "easy", degenerate ? "Degenerate eutectic" : "Simple eutectic", solution, requiredInvariants) };
+  const requiredInvariants = requiredInvariantsFor(solution);
+  return { seed, difficulty, family, solution, puzzle: puzzleFrom(seed, difficulty, degenerate ? "Degenerate eutectic" : "Simple eutectic", solution, requiredInvariants) };
 }
 
 function generateLimited(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
@@ -345,7 +446,7 @@ function generateLimited(seed: number, difficulty: Difficulty = "normal"): Gener
     if (!match) throw new Error("Limited eutectic field could not be classified.");
     return match;
   }, 6);
-  const requiredInvariants: RequiredInvariantSpec[] = [{ startRoleId: "alpha-eut", endRoleId: "beta-eut", interiorRoleIds: ["eutectic"], expectedAssemblage: ["L", "alpha", "beta"], reactionType: "eutectic" }];
+  const requiredInvariants = requiredInvariantsFor(solution);
   return { seed, difficulty, family: "limited-eutectic", solution, puzzle: puzzleFrom(seed, difficulty, "Limited-solubility eutectic", solution, requiredInvariants) };
 }
 
@@ -489,9 +590,9 @@ function generateCompound(seed: number, difficulty: Difficulty = "hard"): Genera
       { type: "curve", startRoleId: "gamma-peak", endRoleId: "e1", recommendedControl: bowedControl(point(e1x, e1t), point(gx, peak), 1), semanticRole: "liquidus-gamma-left" },
       { type: "curve", startRoleId: "gamma-peak", endRoleId: "e2", recommendedControl: bowedControl(point(e2x, e2t), point(gx, peak), 1), semanticRole: "liquidus-gamma-right" },
       { type: "curve", startRoleId: "b-melt", endRoleId: "e2", recommendedControl: bowedControl(point(e2x, e2t), point(100, rightMelt)), semanticRole: "liquidus-beta" },
-      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-e1", recommendedControl: point(gx, e1t * .5), semanticRole: "compound-line-low" },
-      { type: "curve", startRoleId: "gamma-e1", endRoleId: "gamma-e2", recommendedControl: point(gx, (e1t + e2t) / 2), semanticRole: "compound-line-mid" },
-      { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-peak", recommendedControl: point(gx, (e2t + peak) / 2), semanticRole: "compound-line-high" },
+      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-e1", recommendedControl: point(gx, e1t * .5), semanticRole: "compound-line-low", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-e1", endRoleId: "gamma-e2", recommendedControl: point(gx, (e1t + e2t) / 2), semanticRole: "compound-line-mid", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-peak", recommendedControl: point(gx, (e2t + peak) / 2), semanticRole: "compound-line-high", compositionSiteId: "gamma" },
     ],
     invariants: [
       { type: "invariant-horizontal", startRoleId: "left-e1", endRoleId: "gamma-e1", interiorRoleIds: ["e1"], temperatureCelsius: e1t, expectedAssemblage: ["L", "alpha", "gamma"], reactionType: "eutectic" },
@@ -541,8 +642,8 @@ function generateIncongruentCompound(seed: number, difficulty: Difficulty = "eas
       { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(ex, eutecticT), point(0, leftMelt)), semanticRole: "liquidus-alpha" },
       { type: "curve", startRoleId: "eutectic", endRoleId: "peritectic", recommendedControl: bowedControl(point(ex, eutecticT), point(px, peritecticT), .72), semanticRole: "liquidus-gamma" },
       { type: "curve", startRoleId: "peritectic", endRoleId: "b-melt", recommendedControl: bowedControl(point(px, peritecticT), point(100, rightMelt)), semanticRole: "liquidus-beta" },
-      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-eut", recommendedControl: point(gx, eutecticT * .5), semanticRole: "compound-line-low" },
-      { type: "curve", startRoleId: "gamma-eut", endRoleId: "gamma-peritectic", recommendedControl: point(gx, (eutecticT + peritecticT) / 2), semanticRole: "compound-line-high" },
+      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-eut", recommendedControl: point(gx, eutecticT * .5), semanticRole: "compound-line-low", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-eut", endRoleId: "gamma-peritectic", recommendedControl: point(gx, (eutecticT + peritecticT) / 2), semanticRole: "compound-line-high", compositionSiteId: "gamma" },
     ],
     invariants: [
       { type: "invariant-horizontal", startRoleId: "left-eut", endRoleId: "gamma-eut", interiorRoleIds: ["eutectic"], temperatureCelsius: eutecticT, expectedAssemblage: ["L", "alpha", "gamma"], reactionType: "eutectic" },
@@ -595,12 +696,12 @@ function generateTripleEutectic(seed: number): GeneratedRound {
       { type: "curve", startRoleId: "delta-peak", endRoleId: "e2", recommendedControl: bowedControl(point(e2x, e2t), point(g2x, g2Peak), 1), semanticRole: "liquidus-delta-left" },
       { type: "curve", startRoleId: "delta-peak", endRoleId: "e3", recommendedControl: bowedControl(point(e3x, e3t), point(g2x, g2Peak), 1), semanticRole: "liquidus-delta-right" },
       { type: "curve", startRoleId: "b-melt", endRoleId: "e3", recommendedControl: bowedControl(point(e3x, e3t), point(100, bMelt)), semanticRole: "liquidus-beta" },
-      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-e1", recommendedControl: point(g1x, e1t / 2), semanticRole: "gamma-line-low" },
-      { type: "curve", startRoleId: "gamma-e1", endRoleId: "gamma-e2", recommendedControl: point(g1x, (e1t + e2t) / 2), semanticRole: "gamma-line-mid" },
-      { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-peak", recommendedControl: point(g1x, (e2t + g1Peak) / 2), semanticRole: "gamma-line-high" },
-      { type: "curve", startRoleId: "delta-low", endRoleId: "delta-e2", recommendedControl: point(g2x, e2t / 2), semanticRole: "delta-line-low" },
-      { type: "curve", startRoleId: "delta-e2", endRoleId: "delta-e3", recommendedControl: point(g2x, (e2t + e3t) / 2), semanticRole: "delta-line-mid" },
-      { type: "curve", startRoleId: "delta-e3", endRoleId: "delta-peak", recommendedControl: point(g2x, (e3t + g2Peak) / 2), semanticRole: "delta-line-high" },
+      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-e1", recommendedControl: point(g1x, e1t / 2), semanticRole: "gamma-line-low", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-e1", endRoleId: "gamma-e2", recommendedControl: point(g1x, (e1t + e2t) / 2), semanticRole: "gamma-line-mid", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-peak", recommendedControl: point(g1x, (e2t + g1Peak) / 2), semanticRole: "gamma-line-high", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "delta-low", endRoleId: "delta-e2", recommendedControl: point(g2x, e2t / 2), semanticRole: "delta-line-low", compositionSiteId: "delta" },
+      { type: "curve", startRoleId: "delta-e2", endRoleId: "delta-e3", recommendedControl: point(g2x, (e2t + e3t) / 2), semanticRole: "delta-line-mid", compositionSiteId: "delta" },
+      { type: "curve", startRoleId: "delta-e3", endRoleId: "delta-peak", recommendedControl: point(g2x, (e3t + g2Peak) / 2), semanticRole: "delta-line-high", compositionSiteId: "delta" },
     ],
     invariants: [
       { type: "invariant-horizontal", startRoleId: "left-e1", endRoleId: "gamma-e1", interiorRoleIds: ["e1"], temperatureCelsius: e1t, expectedAssemblage: ["L", "alpha", "gamma"], reactionType: "eutectic" },
@@ -625,8 +726,8 @@ function generateTripleEutectic(seed: number): GeneratedRound {
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
     { id: "alpha", symbol: "α", name: "Alpha", kind: "terminal-solid", required: true },
-    { id: "gamma", symbol: "γ", name: "First intermediate", kind: "line-compound", required: true, compositionGroupId: "gamma" },
-    { id: "delta", symbol: "δ", name: "Second intermediate", kind: "line-compound", required: true, compositionGroupId: "delta" },
+    { id: "gamma", symbol: "γ", name: "First intermediate", kind: "line-compound", required: true, compositionSiteId: "gamma", fixedCompositionBPercent: g1x },
+    { id: "delta", symbol: "δ", name: "Second intermediate", kind: "line-compound", required: true, compositionSiteId: "delta", fixedCompositionBPercent: g2x },
     { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
   ];
   const requiredInvariants = solution.invariants.map((item) => ({ startRoleId: item.startRoleId, endRoleId: item.endRoleId, interiorRoleIds: item.interiorRoleIds, expectedAssemblage: item.expectedAssemblage, reactionType: item.reactionType }));
@@ -955,9 +1056,9 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "liquid-spi
       { type: "curve", startRoleId: "right-eutectic", endRoleId: "b-melt", recommendedControl: bowedControl(point(e2x, rightT), point(100, bMelt)), semanticRole: "liquidus-beta" },
       { type: "curve", startRoleId: "dome-left", endRoleId: "dome-peak", recommendedControl: bowedControl(point(domeLeftX, synT), point(gx, domePeakT), 1, .32), semanticRole: "immiscibility-left" },
       { type: "curve", startRoleId: "dome-peak", endRoleId: "dome-right", recommendedControl: bowedControl(point(domeRightX, synT), point(gx, domePeakT), 1, .32), semanticRole: "immiscibility-right" },
-      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-right", recommendedControl: point(gx, rightT / 2), semanticRole: "compound-line-low" },
-      { type: "curve", startRoleId: "gamma-right", endRoleId: "gamma-left", recommendedControl: point(gx, (rightT + leftT) / 2), semanticRole: "compound-line-mid" },
-      { type: "curve", startRoleId: "gamma-left", endRoleId: "gamma-syntectic", recommendedControl: point(gx, (leftT + synT) / 2), semanticRole: "compound-line-high" },
+      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-right", recommendedControl: point(gx, rightT / 2), semanticRole: "compound-line-low", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-right", endRoleId: "gamma-left", recommendedControl: point(gx, (rightT + leftT) / 2), semanticRole: "compound-line-mid", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-left", endRoleId: "gamma-syntectic", recommendedControl: point(gx, (leftT + synT) / 2), semanticRole: "compound-line-high", compositionSiteId: "gamma" },
     ],
     invariants: [
       { type: "invariant-horizontal", startRoleId: "left-eut-end", endRoleId: "gamma-left", interiorRoleIds: ["left-eutectic"], temperatureCelsius: leftT, expectedAssemblage: ["L", "alpha", "gamma"], reactionType: "eutectic" },
@@ -995,11 +1096,11 @@ function generateImmiscibleHard(seed: number, variant: "syntectic" | "liquid-spi
     return label.compositionBPercent < e2x ? { role: "liquid-gamma-right", phases: ["L", "gamma"] } : { role: "liquid-beta", phases: ["L", "beta"] };
   }, 8);
   const inventory: PhaseDefinition[] = [
-    { id: "L", symbol: "L", name: "Homogeneous liquid", kind: "liquid", required: true },
-    { id: "L1", symbol: "L₁", name: "Liquid 1", kind: "liquid", required: true },
-    { id: "L2", symbol: "L₂", name: "Liquid 2", kind: "liquid", required: true },
+    { id: "L", symbol: "L", name: "Homogeneous liquid", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
+    { id: "L1", symbol: "L₁", name: "Liquid 1", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
+    { id: "L2", symbol: "L₂", name: "Liquid 2", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
     { id: "alpha", symbol: "α", name: "Alpha", kind: "terminal-solid", required: true },
-    { id: "gamma", symbol: "γ", name: "Intermediate compound", kind: "line-compound", required: true, compositionGroupId: "gamma" },
+    { id: "gamma", symbol: "γ", name: "Intermediate compound", kind: "line-compound", required: true, compositionSiteId: "gamma", fixedCompositionBPercent: gx },
     { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
   ];
   const requiredInvariants = solution.invariants.map((item) => ({ startRoleId: item.startRoleId, endRoleId: item.endRoleId, interiorRoleIds: item.interiorRoleIds, expectedAssemblage: item.expectedAssemblage, reactionType: item.reactionType }));
@@ -1014,6 +1115,9 @@ function generateMonotectic(seed: number, difficulty: Difficulty = "hard"): Gene
   const parentLiquidX = integer(random, 62, 72);
   const domePeakX = integer(random, 30, parentLiquidX - 14);
   const invariantT = integer(random, 460, 590, 10);
+  const eutecticT = invariantT - integer(random, 170, 230, 10);
+  const eutecticX = integer(random, 28, 42);
+  const betaMeltT = integer(random, eutecticT + 70, invariantT - 60, 10);
   const domePeakT = invariantT + integer(random, 170, 250, 10);
   const alphaMeltT = integer(random, Math.max(domePeakT + 80, 880), 1050, 10);
   const solution: HiddenSolution = {
@@ -1024,11 +1128,16 @@ function generateMonotectic(seed: number, difficulty: Difficulty = "hard"): Gene
       { roleId: "monotectic", point: point(parentLiquidX, invariantT) },
       { roleId: "alpha-invariant", point: point(100, invariantT) },
       { roleId: "alpha-melt", point: point(100, alphaMeltT) },
+      { roleId: "beta-melt", point: point(0, betaMeltT) },
+      { roleId: "beta-eutectic", point: point(0, eutecticT) },
+      { roleId: "lower-eutectic", point: point(eutecticX, eutecticT) },
+      { roleId: "alpha-eutectic", point: point(100, eutecticT) },
     ],
     curves: [
       { type: "curve", startRoleId: "dome-left", endRoleId: "dome-peak", recommendedControl: bowedControl(point(domeLeftX, invariantT), point(domePeakX, domePeakT), 1, .32), semanticRole: "liquid-immiscibility-left" },
       { type: "curve", startRoleId: "dome-peak", endRoleId: "monotectic", recommendedControl: bowedControl(point(parentLiquidX, invariantT), point(domePeakX, domePeakT), 1, .32), semanticRole: "liquid-immiscibility-right" },
       { type: "curve", startRoleId: "monotectic", endRoleId: "alpha-melt", recommendedControl: bowedControl(point(parentLiquidX, invariantT), point(100, alphaMeltT)), semanticRole: "liquidus-alpha" },
+      { type: "curve", startRoleId: "beta-melt", endRoleId: "lower-eutectic", recommendedControl: bowedControl(point(eutecticX, eutecticT), point(0, betaMeltT), .72), semanticRole: "liquidus-beta" },
     ],
     invariants: [{
       type: "invariant-horizontal",
@@ -1042,19 +1151,30 @@ function generateMonotectic(seed: number, difficulty: Difficulty = "hard"): Gene
         above: [["L1", "L2"], ["L", "alpha"]],
         below: [["L2", "alpha"]],
       },
+    }, {
+      type: "invariant-horizontal",
+      startRoleId: "beta-eutectic",
+      endRoleId: "alpha-eutectic",
+      interiorRoleIds: ["lower-eutectic"],
+      temperatureCelsius: eutecticT,
+      expectedAssemblage: ["L2", "beta", "alpha"],
+      reactionType: "eutectic",
     }],
     expectedFields: [],
   };
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "L1-L2", phases: ["L1", "L2"] };
-    if (boundaries.has("frame-bottom")) return { role: "L2-alpha", phases: ["L2", "alpha"] };
-    return { role: "liquid-alpha", phases: ["L", "alpha"] };
-  }, 4);
+    if (boundaries.has("frame-bottom")) return { role: "beta-alpha", phases: ["beta", "alpha"] };
+    if (boundaries.has("generated-curve:3") && label.compositionBPercent < eutecticX) return { role: "L2-beta", phases: ["L2", "beta"] };
+    if (label.temperatureCelsius < invariantT) return { role: "L2-alpha", phases: ["L2", "alpha"] };
+    return { role: "L-alpha", phases: ["L", "alpha"] };
+  }, 6);
   const inventory: PhaseDefinition[] = [
-    { id: "L", symbol: "L", name: "Homogeneous liquid", kind: "liquid", required: true },
-    { id: "L1", symbol: "L₁", name: "Parent liquid", kind: "liquid", required: true },
-    { id: "L2", symbol: "L₂", name: "Second liquid", kind: "liquid", required: true },
+    { id: "L", symbol: "L", name: "Homogeneous liquid", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
+    { id: "L1", symbol: "L₁", name: "Parent liquid", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
+    { id: "L2", symbol: "L₂", name: "Second liquid", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
+    { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
     { id: "alpha", symbol: "α", name: "Alpha", kind: "terminal-solid", required: true },
   ];
   return {
@@ -1083,24 +1203,22 @@ function generateSubsolidusPolymorph(seed: number, difficulty: Difficulty = "nor
   const bMelt = integer(random, 900, 1020, 10);
   const liquidusControl = point(50, Math.min(1080, Math.max(aMelt, bMelt) + 70));
   const solidusControl = point(50, Math.min(aMelt, bMelt) - 190);
-  const leftTransitionX = integer(random, 18, 28);
-  const rightTransitionX = integer(random, 72, 82);
-  const transitionX = integer(random, 43, 57);
-  const transitionT = integer(random, 300, 430, 10);
+  const leftTransition = integer(random, 300, 400, 10);
+  const rightTransition = leftTransition + integer(random, -40, 60, 10);
+  const meanTransition = (leftTransition + rightTransition) / 2;
   const solution: HiddenSolution = {
     puzzleId: `${difficulty}-subsolidus-polymorph-solution-v1-${seed}`,
     points: [
       { roleId: "a-melt", point: point(0, aMelt) },
       { roleId: "b-melt", point: point(100, bMelt) },
-      { roleId: "polymorph-left", point: point(leftTransitionX, 0) },
-      { roleId: "polymorph-critical", point: point(transitionX, transitionT) },
-      { roleId: "polymorph-right", point: point(rightTransitionX, 0) },
+      { roleId: "polymorph-left", point: point(0, leftTransition) },
+      { roleId: "polymorph-right", point: point(100, rightTransition) },
     ],
     curves: [
       { type: "curve", startRoleId: "a-melt", endRoleId: "b-melt", recommendedControl: liquidusControl, semanticRole: "complete-solution-liquidus" },
       { type: "curve", startRoleId: "a-melt", endRoleId: "b-melt", recommendedControl: solidusControl, semanticRole: "complete-solution-solidus" },
-      { type: "curve", startRoleId: "polymorph-left", endRoleId: "polymorph-critical", recommendedControl: bowedControl(point(leftTransitionX, 0), point(transitionX, transitionT), 1, .32), semanticRole: "subsolidus-polymorph-left" },
-      { type: "curve", startRoleId: "polymorph-critical", endRoleId: "polymorph-right", recommendedControl: bowedControl(point(rightTransitionX, 0), point(transitionX, transitionT), 1, .32), semanticRole: "subsolidus-polymorph-right" },
+      { type: "curve", startRoleId: "polymorph-left", endRoleId: "polymorph-right", recommendedControl: point(50, meanTransition + 85), semanticRole: "polymorph-solvus-upper" },
+      { type: "curve", startRoleId: "polymorph-left", endRoleId: "polymorph-right", recommendedControl: point(50, meanTransition - 85), semanticRole: "polymorph-solvus-lower" },
     ],
     invariants: [],
     expectedFields: [],
@@ -1108,22 +1226,19 @@ function generateSubsolidusPolymorph(seed: number, difficulty: Difficulty = "nor
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "liquid-parent", phases: ["L", "gamma"] };
-    const sideWidth = label.compositionBPercent <= transitionX ? transitionX - leftTransitionX : rightTransitionX - transitionX;
-    const normalizedX = sideWidth > 0 ? Math.abs(label.compositionBPercent - transitionX) / sideWidth : 2;
-    const insidePolymorph = label.compositionBPercent > leftTransitionX && label.compositionBPercent < rightTransitionX
-      && label.temperatureCelsius < transitionT * (1 - normalizedX * normalizedX);
-    if (insidePolymorph) return { role: "low-temperature-polymorph", phases: ["delta"], texture: "partial-solubility" };
-    return { role: "high-temperature-polymorph", phases: ["gamma"], texture: "partial-solubility" };
-  }, 4);
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3")) return { role: "polymorph-coexistence", phases: ["gamma", "delta"] };
+    if (boundaries.has("frame-bottom")) return { role: "low-temperature-polymorph", phases: ["delta"], texture: "complete-solid-solution" };
+    return { role: "high-temperature-polymorph", phases: ["gamma"], texture: "complete-solid-solution" };
+  }, 5);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
-    { id: "gamma", symbol: "α", name: "High-temperature solid solution", kind: "terminal-solid", required: true, compositionGroupId: "polymorph" },
-    { id: "delta", symbol: "β", name: "Low-temperature solid solution", kind: "terminal-solid", required: true, compositionGroupId: "polymorph" },
+    { id: "gamma", symbol: "β", name: "High-temperature solid solution", kind: "terminal-solid", required: true, phaseFamilyId: "polymorph", compositionRole: "complete-range", temperatureRole: "high-temperature", labelEquivalenceGroup: "unanchored-complete-solution-polymorphs" },
+    { id: "delta", symbol: "α", name: "Low-temperature solid solution", kind: "terminal-solid", required: true, phaseFamilyId: "polymorph", compositionRole: "complete-range", temperatureRole: "low-temperature", labelEquivalenceGroup: "unanchored-complete-solution-polymorphs" },
   ];
   return { seed, difficulty, family: "subsolidus-polymorph", solution, puzzle: puzzleFrom(seed, difficulty, "Subsolidus polymorphism in a complete solid solution", solution, [], inventory) };
 }
 
-function generateSupersolidusPolymorph(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
+function generateCoupledEutecticPeritectic(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
   const random = randomForSeed(seed ^ 0x73a1f9);
   const eutecticT = integer(random, 380, 470, 10);
   const peritecticT = eutecticT + integer(random, 150, 220, 10);
@@ -1136,7 +1251,7 @@ function generateSupersolidusPolymorph(seed: number, difficulty: Difficulty = "n
   const aMelt = integer(random, peritecticT + 270, 1050, 10);
   const bMelt = integer(random, peritecticT + 210, 1020, 10);
   const solution: HiddenSolution = {
-    puzzleId: `${difficulty}-supersolidus-polymorph-peritectic-v1-${seed}`,
+    puzzleId: `${difficulty}-coupled-eutectic-peritectic-v1-${seed}`,
     points: [
       { roleId: "a-melt", point: point(0, aMelt) }, { roleId: "b-melt", point: point(100, bMelt) },
       { roleId: "alpha-eutectic", point: point(alphaEutX, eutecticT) },
@@ -1171,21 +1286,21 @@ function generateSupersolidusPolymorph(seed: number, difficulty: Difficulty = "n
   solution.expectedFields = deriveExpectedFields(solution, (_label, boundaries) => {
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:3")) return { role: "liquid-alpha", phases: ["L", "alpha"] };
-    if (boundaries.has("generated-curve:1") && boundaries.has("generated-curve:4")) return { role: "liquid-low-polymorph", phases: ["L", "gamma"] };
-    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:5")) return { role: "liquid-high-polymorph", phases: ["L", "delta"] };
+    if (boundaries.has("generated-curve:1") && boundaries.has("generated-curve:4")) return { role: "liquid-intermediate", phases: ["L", "gamma"] };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:5")) return { role: "liquid-beta", phases: ["L", "delta"] };
     if (boundaries.has("generated-curve:3") && boundaries.has("generated-curve:6")) return { role: "alpha", phases: ["alpha"], texture: "partial-solubility" };
-    if (boundaries.has("generated-curve:6") && boundaries.has("generated-curve:7")) return { role: "alpha-low-polymorph", phases: ["alpha", "gamma"] };
-    if (boundaries.has("generated-curve:7") && boundaries.has("generated-curve:8")) return { role: "low-polymorph", phases: ["gamma"], texture: "partial-solubility" };
-    if (boundaries.has("generated-curve:8") && boundaries.has("generated-curve:9")) return { role: "polymorph-coexistence", phases: ["gamma", "delta"] };
-    return { role: "high-polymorph", phases: ["delta"], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:6") && boundaries.has("generated-curve:7")) return { role: "alpha-gamma", phases: ["alpha", "gamma"] };
+    if (boundaries.has("generated-curve:7") && boundaries.has("generated-curve:8")) return { role: "gamma", phases: ["gamma"], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:8") && boundaries.has("generated-curve:9")) return { role: "gamma-beta", phases: ["gamma", "delta"] };
+    return { role: "beta", phases: ["delta"], texture: "partial-solubility" };
   }, 9);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
-    { id: "alpha", symbol: "α", name: "Terminal solid solution", kind: "terminal-solid", required: true },
-    { id: "gamma", symbol: "γ", name: "Low-temperature solid-solution polymorph", kind: "terminal-solid", required: true, compositionGroupId: "polymorph" },
-    { id: "delta", symbol: "γ′", name: "High-temperature solid-solution polymorph", kind: "terminal-solid", required: true, compositionGroupId: "polymorph" },
+    { id: "alpha", symbol: "α", name: "A-rich terminal solid solution", kind: "terminal-solid", required: true, compositionRole: "a-terminal" },
+    { id: "gamma", symbol: "γ", name: "Intermediate solid solution", kind: "intermediate-solid-solution", required: true, compositionRole: "intermediate" },
+    { id: "delta", symbol: "β", name: "B-rich terminal solid solution", kind: "terminal-solid", required: true, compositionRole: "b-terminal" },
   ];
-  return { seed, difficulty, family: "supersolidus-polymorph", solution, puzzle: puzzleFrom(seed, difficulty, "Supersolidus polymorphism with a peritectic", solution, requiredInvariantsFor(solution), inventory) };
+  return { seed, difficulty, family: "coupled-eutectic-peritectic", solution, puzzle: puzzleFrom(seed, difficulty, "Coupled eutectic-peritectic system", solution, requiredInvariantsFor(solution), inventory) };
 }
 
 function generateSuperlatticeSolution(seed: number, difficulty: Difficulty = "normal", variant: "superlattice" | "secondary-solution" = "superlattice"): GeneratedRound {
@@ -1216,13 +1331,13 @@ function generateSuperlatticeSolution(seed: number, difficulty: Difficulty = "no
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "liquid-disordered-solution", phases: ["L", "gamma"] };
-    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3") && label.temperatureCelsius < orderT) return { role: "ordered-superlattice", phases: ["delta"], texture: "partial-solubility" };
-    return { role: "disordered-solid-solution", phases: ["gamma"], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3") && label.temperatureCelsius < orderT) return { role: "ordered-superlattice", phases: ["delta"], texture: "ordered-solid-solution" };
+    return { role: "disordered-solid-solution", phases: ["gamma"], texture: "complete-solid-solution" };
   }, 4);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
-    { id: "gamma", symbol: "α", name: "Disordered solid solution", kind: "terminal-solid", required: true, compositionGroupId: "ordered-solution" },
-    { id: "delta", symbol: "α′", name: "Ordered superlattice", kind: "terminal-solid", required: true, compositionGroupId: "ordered-solution" },
+    { id: "gamma", symbol: "α", name: "Disordered solid solution", kind: "terminal-solid", required: true, phaseFamilyId: "ordered-solution" },
+    { id: "delta", symbol: "α′", name: "Ordered superlattice", kind: "terminal-solid", required: true, phaseFamilyId: "ordered-solution" },
   ];
   const family: DiagramFamily = variant === "superlattice" ? "superlattice" : "secondary-solid-solution";
   return { seed, difficulty, family, solution, puzzle: puzzleFrom(seed, difficulty, variant === "superlattice" ? "Superlattice ordering in a complete solid solution" : "Secondary solid-solution field", solution, [], inventory) };
@@ -1252,7 +1367,7 @@ function generatePeritectoidSystem(seed: number, difficulty: Difficulty = "norma
     curves: [
       { type: "curve", startRoleId: "a-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(eutecticX, eutecticT), point(0, leftMelt)), semanticRole: "liquidus-alpha" },
       { type: "curve", startRoleId: "b-melt", endRoleId: "eutectic", recommendedControl: bowedControl(point(eutecticX, eutecticT), point(100, rightMelt)), semanticRole: "liquidus-beta" },
-      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-peritectoid", recommendedControl: point(gammaX, peritectoidT * .5), semanticRole: "gamma-product-line" },
+      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-peritectoid", recommendedControl: point(gammaX, peritectoidT * .5), semanticRole: "gamma-product-line", compositionSiteId: "gamma" },
     ],
     invariants: [
       { type: "invariant-horizontal", startRoleId: "left-eutectic", endRoleId: "right-eutectic", interiorRoleIds: ["eutectic"], temperatureCelsius: eutecticT, expectedAssemblage: ["L", "alpha", "beta"], reactionType: "eutectic" },
@@ -1273,13 +1388,13 @@ function generatePeritectoidSystem(seed: number, difficulty: Difficulty = "norma
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
     { id: "alpha", symbol: "α", name: "Alpha", kind: "terminal-solid", required: true },
-    { id: "gamma", symbol: "γ", name: "Intermediate product", kind: "line-compound", required: true, compositionGroupId: "gamma" },
+    { id: "gamma", symbol: "γ", name: "Intermediate product", kind: "line-compound", required: true, compositionSiteId: "gamma", fixedCompositionBPercent: gammaX },
     { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
   ];
   return { seed, difficulty, family: "peritectoid", solution, puzzle: puzzleFrom(seed, difficulty, "Complete eutectic system with peritectoid · α + β → γ", solution, requiredInvariantsFor(solution), inventory) };
 }
 
-function generateSolidDecompositionSystem(
+function generateComposableSolidDecompositionSystem(
   seed: number,
   difficulty: Difficulty,
   reactionType: "eutectoid" | "monotectoid",
@@ -1340,8 +1455,8 @@ function generateSolidDecompositionSystem(
   });
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
-    { id: leftId, symbol: "α", name: reactionType === "monotectoid" ? "Low-temperature alpha composition" : "Alpha", kind: "terminal-solid", required: true },
-    { id: parentId, symbol: "γ", name: reactionType === "monotectoid" ? "Parent alpha composition" : "Parent intermediate", kind: "line-compound", required: true, compositionGroupId: parentId },
+    { id: leftId, symbol: "α", name: reactionType === "monotectoid" ? "Low-temperature alpha composition" : "Alpha", kind: "terminal-solid", required: true, phaseFamilyId: reactionType === "monotectoid" ? "alpha-solution" : undefined },
+    { id: parentId, symbol: "γ", name: reactionType === "monotectoid" ? "Parent alpha composition" : "Parent intermediate", kind: "line-compound", required: true, compositionGroupId: parentId, phaseFamilyId: reactionType === "monotectoid" ? "alpha-solution" : undefined },
     { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
   ];
   return { seed, difficulty, family: "rule-composed", solution, puzzle: puzzleFrom(seed, difficulty, `${reactionType} decomposition kernel`, solution, requiredInvariantsFor(solution), inventory) };
@@ -1382,13 +1497,13 @@ function generateCatatecticSystem(seed: number, difficulty: Difficulty): Generat
       { type: "curve", startRoleId: "delta-peak", endRoleId: "liquid-cat", recommendedControl: bowedControl(point(liquidProductX, catatecticT), point(deltaX, deltaPeak)), semanticRole: "liquidus-delta-right" },
       { type: "curve", startRoleId: "liquid-cat", endRoleId: "e3", recommendedControl: bowedControl(point(eutectic3X, eutectic3T), point(liquidProductX, catatecticT), .72), semanticRole: "catatectic-liquid-product" },
       { type: "curve", startRoleId: "e3", endRoleId: "b-melt", recommendedControl: bowedControl(point(eutectic3X, eutectic3T), point(100, bMelt)), semanticRole: "liquidus-beta" },
-      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-e1", recommendedControl: point(gammaX, eutectic1T / 2), semanticRole: "gamma-line-0" },
-      { type: "curve", startRoleId: "gamma-e1", endRoleId: "gamma-e3", recommendedControl: point(gammaX, (eutectic1T + eutectic3T) / 2), semanticRole: "gamma-line-1" },
-      { type: "curve", startRoleId: "gamma-e3", endRoleId: "gamma-cat", recommendedControl: point(gammaX, (eutectic3T + catatecticT) / 2), semanticRole: "gamma-line-2" },
-      { type: "curve", startRoleId: "gamma-cat", endRoleId: "gamma-e2", recommendedControl: point(gammaX, (catatecticT + eutectic2T) / 2), semanticRole: "gamma-line-3" },
-      { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-peak", recommendedControl: point(gammaX, (eutectic2T + gammaPeak) / 2), semanticRole: "gamma-line-4" },
-      { type: "curve", startRoleId: "delta-cat", endRoleId: "delta-e2", recommendedControl: point(deltaX, (catatecticT + eutectic2T) / 2), semanticRole: "delta-line-1" },
-      { type: "curve", startRoleId: "delta-e2", endRoleId: "delta-peak", recommendedControl: point(deltaX, (eutectic2T + deltaPeak) / 2), semanticRole: "delta-line-2" },
+      { type: "curve", startRoleId: "gamma-low", endRoleId: "gamma-e1", recommendedControl: point(gammaX, eutectic1T / 2), semanticRole: "gamma-line-0", boundaryKind: "line-compound", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-e1", endRoleId: "gamma-e3", recommendedControl: point(gammaX, (eutectic1T + eutectic3T) / 2), semanticRole: "gamma-line-1", boundaryKind: "line-compound", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-e3", endRoleId: "gamma-cat", recommendedControl: point(gammaX, (eutectic3T + catatecticT) / 2), semanticRole: "gamma-line-2", boundaryKind: "line-compound", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-cat", endRoleId: "gamma-e2", recommendedControl: point(gammaX, (catatecticT + eutectic2T) / 2), semanticRole: "gamma-line-3", boundaryKind: "line-compound", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "gamma-e2", endRoleId: "gamma-peak", recommendedControl: point(gammaX, (eutectic2T + gammaPeak) / 2), semanticRole: "gamma-line-4", boundaryKind: "line-compound", compositionSiteId: "gamma" },
+      { type: "curve", startRoleId: "delta-cat", endRoleId: "delta-e2", recommendedControl: point(deltaX, (catatecticT + eutectic2T) / 2), semanticRole: "delta-line-1", boundaryKind: "line-compound", compositionSiteId: "delta" },
+      { type: "curve", startRoleId: "delta-e2", endRoleId: "delta-peak", recommendedControl: point(deltaX, (eutectic2T + deltaPeak) / 2), semanticRole: "delta-line-2", boundaryKind: "line-compound", compositionSiteId: "delta" },
     ],
     invariants: [
       { type: "invariant-horizontal", startRoleId: "left-e1", endRoleId: "gamma-e1", interiorRoleIds: ["e1"], temperatureCelsius: eutectic1T, expectedAssemblage: ["L", "alpha", "gamma"], reactionType: "eutectic", incidence: { above: [["L", "alpha"], ["L", "gamma"]], below: [["alpha", "gamma"]] } },
@@ -1481,7 +1596,7 @@ const COMPOSED_SOLID_IDS = ["gamma", "delta", "epsilon", "zeta", "eta", "theta",
 function featureKernel(seed: number, difficulty: Difficulty, feature: ComposableBinaryFeature): GeneratedRound {
   if (feature === "eutectic") return generateSimple(seed);
   if (feature === "peritectic") return generateIncongruentCompound(seed, difficulty);
-  if (feature === "eutectoid" || feature === "monotectoid") return generateSolidDecompositionSystem(seed, difficulty, feature);
+  if (feature === "eutectoid" || feature === "monotectoid") return generateComposableSolidDecompositionSystem(seed, difficulty, feature);
   if (feature === "peritectoid") return generatePeritectoidSystem(seed, difficulty);
   if (feature === "catatectic") return generateCatatecticSystem(seed, difficulty);
   if (feature === "monotectic") return generateMonotectic(seed, difficulty);
@@ -1491,7 +1606,7 @@ function featureKernel(seed: number, difficulty: Difficulty, feature: Composable
   if (feature === "solid-spinodal") return generateSolidMiscibilityGap(seed, difficulty, true);
   if (feature === "solid-miscibility-gap" || feature === "consolute-point") return generateSolidMiscibilityGap(seed, difficulty, false);
   if (feature === "subsolidus-polymorphism") return generateSubsolidusPolymorph(seed, difficulty);
-  if (feature === "supersolidus-polymorphism") return generateSupersolidusPolymorph(seed, difficulty);
+  if (feature === "supersolidus-polymorphism") return generateCoupledEutecticPeritectic(seed, difficulty);
   if (feature === "superlattice") return generateSuperlatticeSolution(seed, difficulty, "superlattice");
   if (feature === "secondary-solution") return generateSuperlatticeSolution(seed, difficulty, "secondary-solution");
   if (feature === "partial-miscibility") return generateLimited(seed, difficulty);
@@ -1570,15 +1685,20 @@ function expandReactionKernel(
     && field.expectedAssemblage[0] === originalRightPhase.id);
   const originalRightGroupId = originalRightPhase.compositionGroupId;
   const inventory: PhaseDefinition[] = base.puzzle.phases.map((phase) => {
-    if (appendedSegmentCount === 0) return phase;
+    const scaledPhase = phase.fixedCompositionBPercent === undefined
+      ? phase
+      : { ...phase, fixedCompositionBPercent: phase.fixedCompositionBPercent * xScale };
+    if (appendedSegmentCount === 0) return scaledPhase;
     if (phase.id === originalRightPhase.id) return {
-      ...phase,
+      ...scaledPhase,
       id: seamPhaseId,
       kind: phase.kind === "line-compound" || !originalRightHasSinglePhaseField ? "line-compound" : "intermediate-solid-solution",
       compositionGroupId: originalRightPhase.id,
+      compositionSiteId: originalRightPhase.id,
+      fixedCompositionBPercent: seamX,
     };
-    if (originalRightGroupId && phase.compositionGroupId === originalRightGroupId) return { ...phase, compositionGroupId: originalRightPhase.id };
-    return phase;
+    if (originalRightGroupId && phase.compositionGroupId === originalRightGroupId) return { ...scaledPhase, compositionGroupId: originalRightPhase.id };
+    return scaledPhase;
   });
 
   const segments: ComposedSegment[] = [];
@@ -1653,7 +1773,7 @@ function expandReactionKernel(
       const lowRole = `${parentPhaseId}-low-${moduleIndex}`;
       solution.points.push({ roleId: lowRole, point: point(parentX, 0) });
       verticalCurveId = `generated-curve:${solution.curves.length}`;
-      solution.curves.push({ type: "curve", startRoleId: lowRole, endRoleId: parentRole, recommendedControl: point(parentX, temperature / 2), semanticRole: `${parentPhaseId}-peritectoid-product-line` });
+      solution.curves.push({ type: "curve", startRoleId: lowRole, endRoleId: parentRole, recommendedControl: point(parentX, temperature / 2), semanticRole: `${parentPhaseId}-peritectoid-product-line`, boundaryKind: "line-compound", compositionSiteId: parentPhaseId });
     } else {
       const apexRole = `${parentPhaseId}-apex-${moduleIndex}`;
       solution.points.push({ roleId: apexRole, point: point(parentX, apexT) });
@@ -1662,7 +1782,7 @@ function expandReactionKernel(
         { type: "curve", startRoleId: apexRole, endRoleId: rightRole, recommendedControl: point(parentX + (segment.rightX - segment.leftX) * .18, apexT - 12), semanticRole: `${reactionType}-right-boundary-${moduleIndex}` },
       );
       verticalCurveId = `generated-curve:${solution.curves.length}`;
-      solution.curves.push({ type: "curve", startRoleId: parentRole, endRoleId: apexRole, recommendedControl: point(parentX, (temperature + apexT) / 2), semanticRole: `${parentPhaseId}-${reactionType}-parent-line` });
+      solution.curves.push({ type: "curve", startRoleId: parentRole, endRoleId: apexRole, recommendedControl: point(parentX, (temperature + apexT) / 2), semanticRole: `${parentPhaseId}-${reactionType}-parent-line`, boundaryKind: "line-compound", compositionSiteId: parentPhaseId });
     }
     const decomposition = reactionType !== "peritectoid";
     solution.invariants.push({
@@ -1687,7 +1807,16 @@ function expandReactionKernel(
       .filter((item, index, items) => index === 0 || item.point.temperatureCelsius !== items[index - 1].point.temperatureCelsius);
     for (let pointIndex = 1; pointIndex < boundaryPoints.length; pointIndex += 1) {
       const low = boundaryPoints[pointIndex - 1]; const high = boundaryPoints[pointIndex];
-      solution.curves.push({ type: "curve", startRoleId: low.roleId, endRoleId: high.roleId, recommendedControl: point(boundary.x, (low.point.temperatureCelsius + high.point.temperatureCelsius) / 2), semanticRole: `${boundary.groupId}-composed-line-${pointIndex}` });
+      const lineCompound = inventory.find((phase) => phase.id === boundary.phaseId)?.kind === "line-compound";
+      solution.curves.push({
+        type: "curve",
+        startRoleId: low.roleId,
+        endRoleId: high.roleId,
+        recommendedControl: point(boundary.x, (low.point.temperatureCelsius + high.point.temperatureCelsius) / 2),
+        semanticRole: `${boundary.groupId}-composed-line-${pointIndex}`,
+        boundaryKind: lineCompound ? "line-compound" : "phase-boundary",
+        compositionSiteId: lineCompound ? boundary.groupId : undefined,
+      });
     }
   });
 
@@ -1728,6 +1857,9 @@ function expandReactionKernel(
       ...field,
       witnessPoint: point(100 - field.witnessPoint.compositionBPercent, field.witnessPoint.temperatureCelsius),
     }));
+    inventory.forEach((phase) => {
+      if (phase.fixedCompositionBPercent !== undefined) phase.fixedCompositionBPercent = 100 - phase.fixedCompositionBPercent;
+    });
   }
 
   const title = `${difficulty === "hard" ? "Large" : "Composed"} rule-generated binary system`;
@@ -1745,9 +1877,11 @@ function generateRuleComposedRound(seed: number, difficulty: "normal" | "hard"):
   let lastViolations = "no candidate was audited";
   for (let solidModuleCount = desiredSolidModules; solidModuleCount >= 0; solidModuleCount -= 1) {
     const candidate = expandReactionKernel(kernel, seed, difficulty, targetIntermediates, solidModuleCount);
-    const audit = auditPhaseEquilibria(candidate.puzzle, candidate.solution);
-    if (audit.valid) return { ...candidate, featuredFeature };
-    lastViolations = audit.violations.map((violation) => `${violation.ruleId}[${violation.elementIds.join("|")}]`).join(", ");
+    const adapted = applyDiagramNotation(candidate.puzzle, candidate.solution);
+    const normalizedCandidate = { ...candidate, puzzle: adapted.puzzle, solution: adapted.solution };
+    const audit = auditPhaseEquilibria(normalizedCandidate.puzzle, normalizedCandidate.solution);
+    if (audit.valid) return { ...normalizedCandidate, featuredFeature };
+    lastViolations = audit.violations.map((violation) => `${violation.ruleId}[${violation.elementIds.join("|")}]: ${violation.message}`).join(", ");
   }
   throw new Error(`${difficulty} seed ${seed} could not satisfy the ${featuredFeature} feature grammar (${lastViolations}).`);
 }
@@ -1797,7 +1931,7 @@ export function detectBinaryFeatures(puzzle: PuzzleDefinition, solution: HiddenS
   if (hasSemantic("solid-miscibility")) counts["solid-miscibility-gap"] = 1;
   if (roles.some((role) => role === "dome-peak" || role === "solid-consolute")) counts["consolute-point"] += 1;
   if (hasSemantic("complete-solution") || hasSemantic("maximum-melting") || hasSemantic("minimum-melting")) counts["complete-solid-solution"] = 1;
-  if (hasSemantic("subsolidus-polymorph")) counts["subsolidus-polymorphism"] = 1;
+  if (hasSemantic("subsolidus-polymorph") || hasSemantic("polymorph-solvus")) counts["subsolidus-polymorphism"] = 1;
   if (hasSemantic("supersolidus-polymorph")) counts["supersolidus-polymorphism"] = 1;
   if (hasSemantic("superlattice")) counts.superlattice = 1;
   if (hasSemantic("solvus") && !hasSemantic("solid-miscibility")) counts["partial-miscibility"] = Math.max(1, counts["partial-miscibility"]);
@@ -1841,9 +1975,144 @@ function assertFeaturedFeatureVisibility(round: GeneratedRound): void {
   }
 }
 
+function generateSolidDecompositionSystem(
+  seed: number,
+  difficulty: Difficulty,
+  reactionType: "eutectoid" | "monotectoid" | "metatectic",
+): GeneratedRound {
+  const random = randomForSeed(seed ^ ({ eutectoid: 0x319bb1, monotectoid: 0x61ac43, metatectic: 0x7e21d9 }[reactionType]));
+  const parentX = integer(random, 44, 56);
+  const leftProductX = integer(random, 16, parentX - 18);
+  const rightProductX = integer(random, parentX + 18, 84);
+  const invariantT = integer(random, 300, 430, 10);
+  const transusT = invariantT + integer(random, 180, 250, 10);
+  const aMelt = integer(random, transusT + 260, 1040, 10);
+  const bMelt = integer(random, transusT + 240, 1020, 10);
+  const liquidusControl = point(50, Math.min(1080, Math.max(aMelt, bMelt) + 60));
+  const solidusControl = point(50, Math.max(transusT + 80, Math.min(aMelt, bMelt) - 180));
+  const leftProduct = reactionType === "monotectoid" ? "delta" : "alpha";
+  const rightProduct = reactionType === "metatectic" ? "L" : "beta";
+  let metatecticEutecticT: number | undefined;
+  let metatecticEutecticX: number | undefined;
+  let metatecticAlphaX: number | undefined;
+  const solution: HiddenSolution = {
+    puzzleId: `${difficulty}-${reactionType}-complete-v1-${seed}`,
+    points: [
+      { roleId: "a-melt", point: point(0, aMelt) },
+      { roleId: "b-melt", point: point(100, bMelt) },
+      { roleId: "parent-left", point: point(0, transusT) },
+      { roleId: "parent-right", point: point(100, transusT) },
+      { roleId: "left-product-invariant", point: point(leftProductX, invariantT) },
+      { roleId: "parent-invariant", point: point(parentX, invariantT) },
+      { roleId: "right-product-invariant", point: point(rightProductX, invariantT) },
+      { roleId: "left-product-low", point: point(0, 0) },
+      { roleId: "right-product-low", point: point(100, 0) },
+    ],
+    curves: [
+      { type: "curve", startRoleId: "a-melt", endRoleId: "b-melt", recommendedControl: liquidusControl, semanticRole: "complete-solution-liquidus", boundaryKind: "liquidus" },
+      { type: "curve", startRoleId: "a-melt", endRoleId: "b-melt", recommendedControl: solidusControl, semanticRole: "complete-solution-solidus", boundaryKind: "solidus" },
+      { type: "curve", startRoleId: "parent-left", endRoleId: "parent-invariant", recommendedControl: point(parentX * .42, transusT - 40), semanticRole: `${reactionType}-parent-left`, boundaryKind: "solvus" },
+      { type: "curve", startRoleId: "parent-invariant", endRoleId: "parent-right", recommendedControl: point(parentX + (100 - parentX) * .58, transusT - 40), semanticRole: `${reactionType}-parent-right`, boundaryKind: "solvus" },
+      { type: "curve", startRoleId: "parent-left", endRoleId: "left-product-invariant", recommendedControl: point(leftProductX * .5, transusT - 75), semanticRole: `${reactionType}-left-product-upper`, boundaryKind: "solvus" },
+      { type: "curve", startRoleId: "right-product-invariant", endRoleId: "parent-right", recommendedControl: point(rightProductX + (100 - rightProductX) * .5, transusT - 75), semanticRole: `${reactionType}-right-product-upper`, boundaryKind: "solvus" },
+      { type: "curve", startRoleId: "left-product-low", endRoleId: "left-product-invariant", recommendedControl: point(leftProductX * .25, invariantT * .5), semanticRole: `${reactionType}-product-left`, boundaryKind: "solvus" },
+      { type: "curve", startRoleId: "right-product-invariant", endRoleId: "right-product-low", recommendedControl: point(rightProductX + (100 - rightProductX) * .75, invariantT * .5), semanticRole: `${reactionType}-product-right`, boundaryKind: "solvus" },
+    ],
+    invariants: [{
+      type: "invariant-horizontal",
+      startRoleId: "left-product-invariant",
+      endRoleId: "right-product-invariant",
+      interiorRoleIds: ["parent-invariant"],
+      temperatureCelsius: invariantT,
+      expectedAssemblage: [leftProduct, "gamma", rightProduct],
+      reactionType,
+    }],
+    expectedFields: [],
+  };
+  if (reactionType === "metatectic") {
+    metatecticEutecticT = invariantT - integer(random, 120, 180, 10);
+    metatecticEutecticX = integer(random, parentX + 8, rightProductX - 6);
+    metatecticAlphaX = Math.max(4, leftProductX - 6);
+    const betaMeltT = integer(random, metatecticEutecticT + 50, invariantT - 40, 10);
+    solution.points = solution.points.filter((item) => item.roleId !== "right-product-low");
+    solution.points.push(
+      { roleId: "alpha-lower-eutectic", point: point(metatecticAlphaX, metatecticEutecticT) },
+      { roleId: "lower-eutectic", point: point(metatecticEutecticX, metatecticEutecticT) },
+      { roleId: "beta-lower-eutectic", point: point(100, metatecticEutecticT) },
+      { roleId: "beta-melt", point: point(100, betaMeltT) },
+    );
+    solution.curves = [
+      ...solution.curves.slice(0, 6),
+      { type: "curve", startRoleId: "left-product-low", endRoleId: "alpha-lower-eutectic", recommendedControl: point(metatecticAlphaX * .25, metatecticEutecticT * .5), semanticRole: "metatectic-alpha-solvus-low", boundaryKind: "solvus" },
+      { type: "curve", startRoleId: "alpha-lower-eutectic", endRoleId: "left-product-invariant", recommendedControl: point((metatecticAlphaX + leftProductX) / 2, (metatecticEutecticT + invariantT) / 2), semanticRole: "metatectic-alpha-solvus-high", boundaryKind: "solvus" },
+      { type: "curve", startRoleId: "right-product-invariant", endRoleId: "lower-eutectic", recommendedControl: bowedControl(point(metatecticEutecticX, metatecticEutecticT), point(rightProductX, invariantT), .72), semanticRole: "metatectic-liquidus-alpha", boundaryKind: "liquidus" },
+      { type: "curve", startRoleId: "beta-melt", endRoleId: "lower-eutectic", recommendedControl: bowedControl(point(metatecticEutecticX, metatecticEutecticT), point(100, betaMeltT), .72), semanticRole: "metatectic-liquidus-beta", boundaryKind: "liquidus" },
+    ];
+    solution.invariants.push({
+      type: "invariant-horizontal",
+      startRoleId: "alpha-lower-eutectic",
+      endRoleId: "beta-lower-eutectic",
+      interiorRoleIds: ["lower-eutectic"],
+      temperatureCelsius: metatecticEutecticT,
+      expectedAssemblage: ["L", "alpha", "beta"],
+      reactionType: "eutectic",
+    });
+  }
+  solution.expectedFields = deriveExpectedFields(solution, (_label, boundaries) => {
+    if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
+    if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "liquid-parent", phases: ["L", "gamma"] };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3")) return { role: "parent", phases: ["gamma"], texture: "partial-solubility" };
+    if (reactionType === "metatectic") {
+      if (boundaries.has("generated-curve:4") && boundaries.has("generated-curve:7")) return { role: "left-product", phases: ["alpha"], texture: "partial-solubility" };
+      if (boundaries.has("generated-curve:7") && boundaries.has("generated-curve:8")) return { role: "metatectic-products", phases: ["alpha", "L"] };
+      if (boundaries.has("generated-curve:5") && boundaries.has("generated-curve:8")) return { role: "reentrant-liquid", phases: ["L"] };
+      if (boundaries.has("generated-curve:9") && boundaries.has("frame-right")) return { role: "liquid-beta", phases: ["L", "beta"] };
+      if (boundaries.has("generated-curve:6") && boundaries.has("frame-bottom")) return { role: "alpha-beta", phases: ["alpha", "beta"] };
+      if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:4")) return { role: "left-product-parent", phases: ["alpha", "gamma"] };
+      if (boundaries.has("generated-curve:3") && boundaries.has("generated-curve:5")) return { role: "parent-right-product", phases: ["gamma", "L"] };
+      throw new Error("Metatectic field could not be classified.");
+    }
+    if (boundaries.has("generated-curve:4") && boundaries.has("generated-curve:6")) return { role: "left-product", phases: [leftProduct], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:5") && boundaries.has("generated-curve:7")) return { role: "right-product", phases: [rightProduct], texture: rightProduct === "L" ? undefined : "partial-solubility" };
+    if (boundaries.has("generated-curve:6") && boundaries.has("generated-curve:7")) return { role: "products", phases: [leftProduct, rightProduct] };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:4")) return { role: "left-product-parent", phases: [leftProduct, "gamma"] };
+    if (boundaries.has("generated-curve:3") && boundaries.has("generated-curve:5")) return { role: "parent-right-product", phases: ["gamma", rightProduct] };
+    throw new Error(`${reactionType} field could not be classified.`);
+  }, reactionType === "metatectic" ? 10 : 8);
+  const inventory: PhaseDefinition[] = [
+    { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
+    ...(reactionType === "monotectoid" ? [{ id: "delta", symbol: "α₂", name: "Product solid solution", kind: "intermediate-solid-solution" as const, required: true, phaseFamilyId: "alpha-solution" }] : [{ id: "alpha", symbol: "α", name: "Left product solid solution", kind: "terminal-solid" as const, required: true }]),
+    { id: "gamma", symbol: reactionType === "monotectoid" ? "α₁" : "γ", name: "Parent solid solution", kind: "intermediate-solid-solution", required: true, phaseFamilyId: reactionType === "monotectoid" ? "alpha-solution" : "parent-solution" },
+    { id: "beta", symbol: "β", name: "Right product solid solution", kind: "terminal-solid" as const, required: true },
+  ];
+  const title = `${REACTION_RULES[reactionType].title} in a complete melting system · ${REACTION_RULES[reactionType].coolingEquation}`;
+  return { seed, difficulty, family: reactionType, solution, puzzle: puzzleFrom(seed, difficulty, title, solution, requiredInvariantsFor(solution), inventory) };
+}
+
 function annotateRound(round: GeneratedRound): GeneratedRound {
+  const adaptedIdentity = round.family === "rule-composed"
+    ? applyDiagramNotation(round.puzzle, round.solution)
+    : adaptPhaseIdentities(round.puzzle, round.solution);
+  round = { ...round, puzzle: adaptedIdentity.puzzle, solution: adaptedIdentity.solution };
+  const invariantTypes = [...new Set(round.solution.invariants.map((item) => item.reactionType))];
+  const topologyInvariantTypes = invariantTypes.map((type) => type === "catatectic" ? "metatectic" : type);
+  const topologyAssembly = invariantTypes.length === 0 || invariantTypes.length > 2
+    ? undefined
+    : assemblePhaseTopology({
+      invariantTargets: topologyInvariantTypes.map((type) => ({ type, weight: 1, minCount: 1, maxCount: 1 })),
+      required: { invariantCount: { min: invariantTypes.length, max: invariantTypes.length } },
+    }, round.seed);
+  if (topologyAssembly && !topologyAssembly.accepted) {
+    const detail = topologyAssembly.rejections.map((item) => `${item.code}: ${item.message}`).join("\n");
+    throw new Error(`${round.solution.puzzleId} failed topology assembly:\n${detail}`);
+  }
   assertPhaseEquilibria(round.puzzle, round.solution);
   assertFeaturedFeatureVisibility(round);
+  const thermodynamicAudit = auditRoundThermodynamicRealizability(round.puzzle, round.solution);
+  if (!thermodynamicAudit.valid) {
+    const detail = thermodynamicAudit.violations.map((item) => `${item.ruleId}: ${item.message}`).join("\n");
+    throw new Error(`${round.solution.puzzleId} failed local Gibbs realizability:\n${detail}`);
+  }
   const { points, geometry } = generatedGeometry(round.solution);
   const cells = extractFaces(points, geometry);
   const minimumArea = Math.min(...cells.map((cell) => Math.abs(polygonArea(cell.polygon))));
@@ -1858,7 +2127,8 @@ function annotateRound(round: GeneratedRound): GeneratedRound {
     const assemblage = topField?.expectedAssemblage.join(" + ") ?? "unmapped";
     throw new Error(`${round.solution.puzzleId} must begin with the homogeneous L field at the top edge; found ${assemblage}.`);
   }
-  const intermediatePhaseCount = round.puzzle.intermediateCompositions.length;
+  const intermediatePhaseCount = round.puzzle.intermediateCompositions.length
+    + round.puzzle.phases.filter((phase) => phase.kind === "intermediate-solid-solution").length;
   const invariantCriticalRoles = new Set(round.solution.invariants.flatMap((item) => item.interiorRoleIds));
   const nonInvariantCriticalRoles = round.solution.points.filter((item) =>
     !invariantCriticalRoles.has(item.roleId)
@@ -1874,26 +2144,149 @@ function annotateRound(round: GeneratedRound): GeneratedRound {
     intermediatePhaseCount,
     criticalPointCount: invariantCriticalRoles.size + nonInvariantCriticalRoles.length,
     layoutQualityScore: Math.min(100, Math.round(minimumArea / 4)),
+    thermodynamicCertificate: {
+      scope: thermodynamicAudit.scope,
+      certifiedInvariantCount: thermodynamicAudit.certifiedInvariants.length,
+    },
+    topologyCertificate: round.solution.invariants.length > 0 ? {
+      schemaVersion: "phase-topology-v1",
+      certifiedInvariantTypes: invariantTypes,
+      certifiedInvariantCount: round.solution.invariants.length,
+      scope: "generated-diagram",
+    } : undefined,
   };
+}
+
+type FamilyGenerator = (seed: number) => GeneratedRound;
+
+export interface FamilyGenerationRule {
+  id: string;
+  weight: number;
+  generate: FamilyGenerator;
+  requiredInvariantTypes: ReactionType[];
+  requiredInvariantCounts?: Partial<Record<ReactionType, number>>;
+  requiredFeatures: GenerationFeature[];
+}
+
+/** Weighted accepted-output rules. Weights are integer percentage shares within each difficulty. */
+export const FAMILY_RULES: Record<Difficulty, readonly FamilyGenerationRule[]> = {
+  easy: [
+    { id: "compound-double-eutectic", weight: 1, generate: (seed) => generateCompound(seed, "easy"), requiredInvariantTypes: ["eutectic"], requiredInvariantCounts: { eutectic: 2 }, requiredFeatures: ["compound"] },
+    { id: "peritectic", weight: 1, generate: (seed) => generateIncongruentCompound(seed, "easy"), requiredInvariantTypes: ["eutectic", "peritectic"], requiredFeatures: ["compound"] },
+    { id: "limited-eutectic", weight: 1, generate: (seed) => generateLimited(seed, "easy"), requiredInvariantTypes: ["eutectic"], requiredFeatures: ["partial-solubility"] },
+    { id: "simple-eutectic", weight: 1, generate: generateSimple, requiredInvariantTypes: ["eutectic"], requiredFeatures: [] },
+    { id: "peritectoid", weight: 1, generate: (seed) => generatePeritectoidSystem(seed, "easy"), requiredInvariantTypes: ["eutectic", "peritectoid"], requiredFeatures: ["intermediate-phase"] },
+    { id: "subsolidus-polymorph", weight: 1, generate: (seed) => generateSubsolidusPolymorph(seed, "easy"), requiredInvariantTypes: [], requiredFeatures: ["polymorphism"] },
+    { id: "eutectoid", weight: 1, generate: (seed) => generateSolidDecompositionSystem(seed, "easy", "eutectoid"), requiredInvariantTypes: ["eutectoid"], requiredFeatures: ["partial-solubility"] },
+  ],
+  normal: [
+    { id: "rule-composed-normal", weight: 1, generate: (seed) => generateRuleComposedRound(seed, "normal"), requiredInvariantTypes: [], requiredFeatures: [] },
+  ],
+  hard: [
+    { id: "large-binary-hard", weight: 1, generate: (seed) => generateRuleComposedRound(seed, "hard"), requiredInvariantTypes: [], requiredFeatures: [] },
+  ],
+};
+
+/** Compatibility view for tests and direct family sampling. */
+export const FAMILY_POOLS: Record<Difficulty, readonly FamilyGenerator[]> = {
+  easy: FAMILY_RULES.easy.map((rule) => rule.generate),
+  normal: [
+    (seed) => generateCompound(seed, "normal"),
+    (seed) => generateIncongruentCompound(seed, "normal"),
+    (seed) => generateLimited(seed, "normal"),
+    (seed) => generatePeritectoidSystem(seed, "normal"),
+    (seed) => generateSubsolidusPolymorph(seed, "normal"),
+    (seed) => generateCoupledEutecticPeritectic(seed, "normal"),
+    (seed) => generateSuperlatticeSolution(seed, "normal"),
+    (seed) => generateSolidDecompositionSystem(seed, "normal", "eutectoid"),
+    (seed) => generateSolidDecompositionSystem(seed, "normal", "monotectoid"),
+    (seed) => generateSolidDecompositionSystem(seed, "normal", "metatectic"),
+  ],
+  hard: FAMILY_RULES.hard.map((rule) => rule.generate),
+};
+
+function weightedRule(seed: number, difficulty: Difficulty): { rule: FamilyGenerationRule; targetPercent: number } {
+  const rules = FAMILY_RULES[difficulty];
+  const total = rules.reduce((sum, rule) => {
+    if (!Number.isInteger(rule.weight) || rule.weight <= 0) throw new Error(`Generation weight for ${rule.id} must be a positive integer.`);
+    return sum + rule.weight;
+  }, 0);
+  let slot = seed % total;
+  for (const rule of rules) {
+    if (slot < rule.weight) return { rule, targetPercent: (rule.weight / total) * 100 };
+    slot -= rule.weight;
+  }
+  throw new Error("Weighted generation registry is empty.");
+}
+
+function roundHasFeature(round: GeneratedRound, feature: GenerationFeature): boolean {
+  switch (feature) {
+    case "compound": return round.puzzle.phases.some((phase) => phase.kind === "line-compound");
+    case "partial-solubility": return round.solution.expectedFields.some((field) => field.texture === "partial-solubility");
+    case "polymorphism": return round.puzzle.phases.some((phase) => phase.temperatureRole)
+      || round.solution.curves.some((curve) => curve.boundaryKind === "polymorph-boundary");
+    case "ordering": return round.solution.curves.some((curve) => curve.boundaryKind === "ordering-boundary");
+    case "liquid-immiscibility": return round.solution.curves.some((curve) => curve.boundaryKind === "miscibility-gap");
+    case "spinodal": return round.solution.curves.some((curve) => curve.boundaryKind === "stability-guide");
+    case "intermediate-phase": return round.puzzle.phases.some((phase) => phase.kind === "line-compound"
+      || phase.kind === "intermediate-solid-solution"
+      || phase.compositionRole === "intermediate");
+  }
 }
 
 export function generateRound(rawSeed: number, difficulty: Difficulty = "normal"): GeneratedRound {
   const seed = rawSeed >>> 0;
-  let round: GeneratedRound;
-  if (difficulty === "easy") {
-    const family = seed % 6;
-    if (family === 0) round = generateCompound(seed, "easy");
-    else if (family === 1) round = generateIncongruentCompound(seed, "easy");
-    else if (family === 2) round = generateLimited(seed, "easy");
-    else if (family === 3) round = generateSimple(seed);
-    else if (family === 4) round = generatePeritectoidSystem(seed, "easy");
-    else round = generateSubsolidusPolymorph(seed, "easy");
-  } else if (difficulty === "hard") {
-    round = generateRuleComposedRound(seed, "hard");
-  } else {
-    round = generateRuleComposedRound(seed, "normal");
+  if (difficulty === "normal" || difficulty === "hard") {
+    const round = annotateRound(generateRuleComposedRound(seed, difficulty));
+    const requiredInvariantTypes = [...new Set(round.solution.invariants.map((item) => item.reactionType))];
+    const requiredInvariantCounts = round.solution.invariants.reduce<Partial<Record<ReactionType, number>>>((counts, invariant) => ({
+      ...counts,
+      [invariant.reactionType]: (counts[invariant.reactionType] ?? 0) + 1,
+    }), {});
+    return {
+      ...round,
+      generationContract: {
+        ruleId: difficulty === "hard" ? "large-binary-hard" : "rule-composed-normal",
+        weight: 1,
+        targetPercent: 100,
+        requiredInvariantTypes,
+        requiredInvariantCounts,
+        requiredFeatures: [],
+      },
+    };
   }
-  return annotateRound(round);
+  const { rule, targetPercent } = weightedRule(seed, difficulty);
+  const round = annotateRound(rule.generate(seed));
+  const actualInvariantTypes = new Set(round.solution.invariants.map((item) => item.reactionType));
+  const requiredInvariantTypes = new Set(rule.requiredInvariantTypes);
+  if (actualInvariantTypes.size !== requiredInvariantTypes.size
+    || [...actualInvariantTypes].some((type) => !requiredInvariantTypes.has(type))) {
+    throw new Error(`${round.solution.puzzleId} does not realize generation rule ${rule.id}'s invariant contract.`);
+  }
+  const requiredInvariantCounts = Object.fromEntries(rule.requiredInvariantTypes.map((type) => [
+    type,
+    rule.requiredInvariantCounts?.[type] ?? 1,
+  ])) as Partial<Record<ReactionType, number>>;
+  const actualInvariantCounts = round.solution.invariants.reduce<Partial<Record<ReactionType, number>>>((counts, invariant) => ({
+    ...counts,
+    [invariant.reactionType]: (counts[invariant.reactionType] ?? 0) + 1,
+  }), {});
+  if (rule.requiredInvariantTypes.some((type) => actualInvariantCounts[type] !== requiredInvariantCounts[type])) {
+    throw new Error(`${round.solution.puzzleId} does not realize generation rule ${rule.id}'s invariant occurrence contract.`);
+  }
+  const missingFeature = rule.requiredFeatures.find((feature) => !roundHasFeature(round, feature));
+  if (missingFeature) throw new Error(`${round.solution.puzzleId} does not realize required feature ${missingFeature}.`);
+  return {
+    ...round,
+    generationContract: {
+      ruleId: rule.id,
+      weight: rule.weight,
+      targetPercent,
+      requiredInvariantTypes: [...rule.requiredInvariantTypes],
+      requiredInvariantCounts,
+      requiredFeatures: [...rule.requiredFeatures],
+    },
+  };
 }
 
 export function generateEutecticRound(rawSeed: number): GeneratedRound {
