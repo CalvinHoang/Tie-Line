@@ -263,7 +263,10 @@ export function App() {
     setState((current) => {
       const next = update(current);
       if (next === current) return current;
-      history.current.push(structuredClone(current));
+      // State transitions are immutable, so the previous object is already a
+      // stable undo snapshot. Deep-cloning the full generated diagram here
+      // added avoidable work to every field tap and geometry edit.
+      history.current.push(current);
       if (history.current.length > 80) history.current.shift();
       return next;
     });
