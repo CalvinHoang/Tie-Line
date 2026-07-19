@@ -576,6 +576,9 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 :root[data-theme="light"] .eyebrow { letter-spacing: .2em; }
 :root[data-theme="light"] .board-frame { stroke: #5b4f3b; }
 :root[data-theme="light"] .board-grain { opacity: .5; }
+:root[data-theme="light"] .diagram-canvas > .ink-plate { filter: url(#pen-ink-board); }
+:root[data-theme="light"] .concept-diagram > .ink { filter: url(#pen-ink-glyph); }
+:root[data-theme="light"] .foundation-card svg > .ink { filter: url(#pen-ink-glyph); }
 :root[data-theme="light"] .geometry-line { stroke: #2b2318; stroke-width: 2; }
 :root[data-theme="light"] .invariant-line { stroke: var(--accent); stroke-width: 2.4; }
 :root[data-theme="light"] .placement-grid line { stroke: #e0d5b8; }

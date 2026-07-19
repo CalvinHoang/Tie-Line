@@ -287,7 +287,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
           <feColorMatrix type="matrix" values="0 0 0 0 0.36  0 0 0 0 0.30  0 0 0 0 0.20  0 0 0 0.32 0" />
         </filter>
       </defs>
-      <g transform={`translate(${state.viewport.translateX} ${state.viewport.translateY}) scale(${state.viewport.scale})`}>
+      <g className="ink-plate" transform={`translate(${state.viewport.translateX} ${state.viewport.translateY}) scale(${state.viewport.scale})`}>
         <rect className="board-surface" x={FRAME.left} y={FRAME.top} width={FRAME.right - FRAME.left} height={FRAME.bottom - FRAME.top} />
         <rect className="board-grain" aria-hidden="true" x={FRAME.left} y={FRAME.top} width={FRAME.right - FRAME.left} height={FRAME.bottom - FRAME.top} filter="url(#paper-grain)" />
         {state.activeTool === "point" && !state.solved && (
