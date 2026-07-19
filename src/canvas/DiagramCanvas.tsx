@@ -282,9 +282,14 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
         <pattern id="unstable-spinodal-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)">
           <line x1="0" y1="0" x2="0" y2="8" />
         </pattern>
+        <filter id="paper-grain" x="-2%" y="-2%" width="104%" height="104%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="11" stitchTiles="stitch" />
+          <feColorMatrix type="matrix" values="0 0 0 0 0.36  0 0 0 0 0.30  0 0 0 0 0.20  0 0 0 0.32 0" />
+        </filter>
       </defs>
       <g transform={`translate(${state.viewport.translateX} ${state.viewport.translateY}) scale(${state.viewport.scale})`}>
         <rect className="board-surface" x={FRAME.left} y={FRAME.top} width={FRAME.right - FRAME.left} height={FRAME.bottom - FRAME.top} />
+        <rect className="board-grain" aria-hidden="true" x={FRAME.left} y={FRAME.top} width={FRAME.right - FRAME.left} height={FRAME.bottom - FRAME.top} filter="url(#paper-grain)" />
         {state.activeTool === "point" && !state.solved && (
           <g className="placement-grid" aria-hidden="true">
             {Array.from({ length: 11 }, (_, index) => {

@@ -132,6 +132,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .result-actions button { min-height: 44px; border: 1px solid var(--hairline); border-radius: 13px; color: var(--ink); background: transparent; cursor: pointer; }
 .result-actions button:last-child { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); font-weight: 760; }
 .board-surface { fill: var(--surface); }
+.board-grain { opacity: 0; pointer-events: none; }
 .board-frame { fill: none; stroke: #596068; stroke-width: 1.6; stroke-linecap: square; vector-effect: non-scaling-stroke; pointer-events: none; }
 .axis-label { font-size: 26px; font-weight: 650; fill: #aeb5bb; }
 .placement-grid line { stroke: #2c3238; stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -539,19 +540,61 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .left-handed .control-rail .submit-action { grid-column: 1; grid-row: 1; }
 .left-handed .control-rail > .icon-action:first-child { grid-column: 3; grid-row: 1; }
 
-:root[data-theme="light"] { color-scheme: light; --paper: #f6f5f1; --surface: #fff; --raised: #ecebe6; --ink: #182023; --muted: #6f7777; --hairline: #d8d9d4; --accent: #199c9b; --accent-ink: #f5ffff; --shadow: 0 18px 48px rgb(37 44 43 / 15%); background: #ecebe6; }
-:root[data-theme="light"] body { background: #ecebe6; }
-:root[data-theme="light"] .board-frame { stroke: #838a88; }
-:root[data-theme="light"] .geometry-line { stroke: #344143; }
-:root[data-theme="light"] .invariant-line { stroke: var(--accent); }
-:root[data-theme="light"] .placement-grid line { stroke: #eceeeb; }
-:root[data-theme="light"] .axis-label { fill: #687170; }
-:root[data-theme="light"] .symbol-palette, :root[data-theme="light"] .feedback-toast, :root[data-theme="light"] .failure-actions, :root[data-theme="light"] .completion-actions, :root[data-theme="light"] .result-sheet { background: rgb(255 255 255 / 96%); color: var(--ink); }
-
-@media (prefers-color-scheme: light) {
-  :root[data-theme="system"] { color-scheme: light; --paper: #f6f5f1; --surface: #fff; --raised: #ecebe6; --ink: #182023; --muted: #6f7777; --hairline: #d8d9d4; --accent: #199c9b; --accent-ink: #f5ffff; }
-  :root[data-theme="system"] body { background: #ecebe6; }
+/* Light theme is a mid-century print plate: aged paper, warm near-black ink,
+   red ink reserved for the taught feature, typewriter type with serif titles. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  font-family: "Courier Prime", "Courier New", ui-monospace, monospace;
+  --paper: #f0e9d6;
+  --surface: #ece3cc;
+  --raised: #e4d9bd;
+  --ink: #2b2318;
+  --muted: #71634c;
+  --hairline: #cec0a0;
+  --accent: #9d3c25;
+  --accent-ink: #f6efdd;
+  --error: #8e2f1c;
+  --success: #4f6b3a;
+  --liquid: #1e5b66;
+  --alpha: #7e5c10;
+  --beta: #66406e;
+  --gamma: #96421a;
+  --shadow: 0 14px 34px rgb(80 62 30 / 18%);
+  background: #e7dec6;
+  color: var(--ink);
 }
+:root[data-theme="light"] .concept-focus > p:not(.reaction-line), :root[data-theme="light"] .transition-block > p:last-child, :root[data-theme="light"] .instruction-strip { color: #4c4131; }
+:root[data-theme="light"] .status-cluster time { color: #71634c; }
+:root[data-theme="light"] .phase-label .phase-plus { fill: #71634c; }
+:root[data-theme="light"] .field-target:active { fill: rgb(157 60 37 / 10%); }
+:root[data-theme="light"] .reaction-line { background: rgb(157 60 37 / 7%); }
+:root[data-theme="light"] .attempts span.is-available { box-shadow: 0 0 12px rgb(157 60 37 / 22%); }
+:root[data-theme="light"] .symbol-palette button.is-active { box-shadow: 0 5px 16px rgb(157 60 37 / 20%); }
+:root[data-theme="light"] body { background: #e7dec6; }
+:root[data-theme="light"] h1, :root[data-theme="light"] h2, :root[data-theme="light"] h3, :root[data-theme="light"] h4 { font-family: "STIX Two Math", "Times New Roman", Georgia, serif; font-weight: 500; letter-spacing: .01em; }
+:root[data-theme="light"] .home-title { font-family: "Courier Prime", "Courier New", monospace; font-weight: 700; letter-spacing: .22em; }
+:root[data-theme="light"] .eyebrow { letter-spacing: .2em; }
+:root[data-theme="light"] .board-frame { stroke: #5b4f3b; }
+:root[data-theme="light"] .board-grain { opacity: .5; }
+:root[data-theme="light"] .geometry-line { stroke: #2b2318; stroke-width: 2; }
+:root[data-theme="light"] .invariant-line { stroke: var(--accent); stroke-width: 2.4; }
+:root[data-theme="light"] .placement-grid line { stroke: #e0d5b8; }
+:root[data-theme="light"] .axis-label { fill: #4c4131; font-weight: 500; }
+:root[data-theme="light"] .field-target:hover { fill: rgb(157 60 37 / 5%); }
+:root[data-theme="light"] .field-target.is-labelled { fill: rgb(43 35 24 / 3%); }
+:root[data-theme="light"] .phase-L2, :root[data-theme="light"] .phase-label .phase-L2, :root[data-theme="light"] .target-contact.phase-L2 { color: #2f4f7c; fill: #2f4f7c; --contact-color: #2f4f7c; }
+:root[data-theme="light"] .phase-alpha2, :root[data-theme="light"] .phase-label .phase-alpha2, :root[data-theme="light"] .target-contact.phase-alpha2 { color: #8a4d17; fill: #8a4d17; --contact-color: #8a4d17; }
+:root[data-theme="light"] .phase-delta, :root[data-theme="light"] .phase-label .phase-delta, :root[data-theme="light"] .target-contact.phase-delta { color: #4f6b2a; fill: #4f6b2a; --contact-color: #4f6b2a; }
+:root[data-theme="light"] .phase-betaPrime, :root[data-theme="light"] .phase-label .phase-betaPrime, :root[data-theme="light"] .target-contact.phase-betaPrime { color: #5f4b8a; fill: #5f4b8a; --contact-color: #5f4b8a; }
+:root[data-theme="light"] .concept-diagram path { stroke: #2b2318; }
+:root[data-theme="light"] .concept-diagram .axes { stroke: #6e5f45; }
+:root[data-theme="light"] .concept-diagram path.accent { stroke: var(--accent); }
+:root[data-theme="light"] .concept-diagram circle { fill: var(--paper); }
+:root[data-theme="light"] .foundation-card svg path { stroke: #2b2318; }
+:root[data-theme="light"] .foundation-card svg .axes { stroke: #6e5f45; }
+:root[data-theme="light"] .foundation-card svg path.accent { stroke: var(--accent); }
+:root[data-theme="light"] .foundation-card svg circle { fill: var(--paper); stroke: #2b2318; }
+:root[data-theme="light"] .symbol-palette, :root[data-theme="light"] .feedback-toast, :root[data-theme="light"] .failure-actions, :root[data-theme="light"] .completion-actions, :root[data-theme="light"] .result-sheet { background: rgb(240 233 214 / 96%); color: var(--ink); }
 
 @keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes panel-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

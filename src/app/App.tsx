@@ -178,8 +178,16 @@ export function App() {
   useEffect(() => saveProfile(profile), [profile]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = profile.settings.theme;
+    const systemDark = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : undefined;
+    const apply = () => {
+      document.documentElement.dataset.theme = profile.settings.theme === "system"
+        ? (systemDark?.matches ? "dark" : "light")
+        : profile.settings.theme;
+    };
+    apply();
     document.documentElement.classList.toggle("reduce-motion", profile.settings.reducedMotion);
+    systemDark?.addEventListener("change", apply);
+    return () => systemDark?.removeEventListener("change", apply);
   }, [profile.settings]);
 
   useEffect(() => {
