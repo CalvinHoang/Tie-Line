@@ -78,6 +78,7 @@ test("opens a complete generated diagram ready for labels", async ({ page }) => 
   await expect(page.getByRole("button", { name: "Submit labels" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Clear all labels" })).toBeVisible();
   expect(await board.locator(".geometry-line").count()).toBeGreaterThan(0);
+  await expect(board.locator(".geometry-line:not(.is-stability-guide)").first()).toHaveCSS("stroke-dasharray", "none");
   expect(await board.locator(".field-target").count()).toBeGreaterThan(1);
   expect(await board.locator(".point-dot").count()).toBeGreaterThan(2);
   await expect(board.locator(".geometry-hit").first()).toHaveCSS("pointer-events", "none");
@@ -104,6 +105,11 @@ test("zooms with controls and pans with a one-pointer drag without placing a lab
   await expect(board.locator(".phase-label")).toHaveCount(0);
   await page.getByRole("button", { name: "Reset view" }).click();
   await expect(ink).toHaveAttribute("transform", "translate(0 0) scale(1)");
+
+  const zoomIn = page.getByRole("button", { name: "Zoom in" });
+  for (let step = 0; step < 10 && await zoomIn.isEnabled(); step += 1) await zoomIn.click();
+  await expect(page.getByRole("button", { name: "Reset view" })).toHaveText("600%");
+  await expect(zoomIn).toBeDisabled();
 });
 
 test("links intermediate compositions to their phase symbols on the bottom axis", async ({ page }) => {
