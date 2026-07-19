@@ -110,14 +110,18 @@ export function fieldLabelPlacement(polygon: LogicalPoint[], phaseCount: number)
   const attempts: Array<{ orientation: "horizontal" | "vertical"; scales: number[] }> = [
     { orientation: "horizontal", scales: [1, 0.9, 0.8, 0.7, 0.6] },
     ...(phaseCount > 1 ? [{ orientation: "vertical" as const, scales: [1, 0.9, 0.8, 0.7, 0.6] }] : []),
-    { orientation: "horizontal", scales: [0.5, 0.45] },
-    ...(phaseCount > 1 ? [{ orientation: "vertical" as const, scales: [0.5, 0.45] }] : []),
+    { orientation: "horizontal", scales: [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1] },
+    ...(phaseCount > 1 ? [{ orientation: "vertical" as const, scales: [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1] }] : []),
   ];
   for (const attempt of attempts) {
     const baseHalfWidth = attempt.orientation === "horizontal" ? (phaseCount <= 1 ? 22 : 43) : 22;
     const baseHalfHeight = attempt.orientation === "horizontal" ? 22 : 37;
     for (const scale of attempt.scales) {
-      const candidate = bestCandidate(svgPolygon, baseHalfWidth * scale + 5, baseHalfHeight * scale + 4);
+      const candidate = bestCandidate(
+        svgPolygon,
+        baseHalfWidth * scale + Math.max(1, 4 * scale),
+        baseHalfHeight * scale + Math.max(1, 3 * scale),
+      );
       if (candidate) return { ...candidate, scale, fits: true, orientation: attempt.orientation };
     }
   }
@@ -139,5 +143,5 @@ export function fieldLabelPlacement(polygon: LogicalPoint[], phaseCount: number)
       if (nextClearance > clearance) { safest = point; clearance = nextClearance; }
     }
   }
-  return { ...safest, scale: 0.45, fits: false, orientation: "horizontal" };
+  return { ...safest, scale: 0.1, fits: false, orientation: "horizontal" };
 }

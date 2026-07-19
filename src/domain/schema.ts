@@ -4,6 +4,21 @@ export type PointRoleId = string;
 export type GeometryId = string;
 export type CellId = string;
 
+export type BinaryInvariantType =
+  | "eutectic"
+  | "peritectic"
+  | "eutectoid"
+  | "peritectoid"
+  | "catatectic"
+  | "monotectoid"
+  | "monotectic"
+  | "syntectic";
+
+export interface InvariantIncidence {
+  above: PhaseId[][];
+  below: PhaseId[][];
+}
+
 export interface LogicalPoint {
   compositionBPercent: number;
   temperatureCelsius: number;
@@ -22,6 +37,7 @@ export type ReactionType =
   | "monotectic"
   | "monotectoid"
   | "syntectic"
+  | "catatectic"
   | "metatectic";
 
 export type BoundaryKind =
@@ -41,6 +57,8 @@ export interface PhaseDefinition {
   name: string;
   kind: PhaseKind;
   required: boolean;
+  /** Legacy grouping used by composed large-binary generators. */
+  compositionGroupId?: string;
   /** Structural/solution family shared by polymorphs or ordered variants. */
   phaseFamilyId?: string;
   /** Composition-domain identity used to derive and audit notation. */
@@ -161,6 +179,7 @@ export interface RequiredInvariantSpec {
   interiorRoleIds: PointRoleId[];
   expectedAssemblage: PhaseId[];
   reactionType: ReactionType;
+  incidence?: InvariantIncidence;
   reactantPhaseIds?: PhaseId[];
   productPhaseIds?: PhaseId[];
   phaseCompositionRoleIds?: Record<PhaseId, PointRoleId>;
@@ -223,6 +242,7 @@ export interface HiddenInvariantSolution {
   temperatureCelsius: number;
   expectedAssemblage: PhaseId[];
   reactionType: ReactionType;
+  incidence?: InvariantIncidence;
   reactantPhaseIds?: PhaseId[];
   productPhaseIds?: PhaseId[];
   phaseCompositionRoleIds?: Record<PhaseId, PointRoleId>;

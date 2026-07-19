@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { FAMILY_POOLS, generateRound, type Difficulty } from "./generator";
+import { FAMILY_POOLS, type Difficulty } from "./generator";
 import { adaptPhaseIdentities, inferPhaseIdentityInputs } from "./phase-identity-adapter";
 import { auditPhaseEquilibria } from "./phase-equilibria-validator";
 
 describe("phase identity adapter", () => {
   it("infers low alpha/high beta for the unanchored complete-range polymorph", () => {
-    const round = generateRound(4, "normal");
+    const round = FAMILY_POOLS.normal[4](4);
     expect(round.family).toBe("subsolidus-polymorph");
     const adapted = adaptPhaseIdentities(round.puzzle, round.solution);
     const low = adapted.puzzle.phases.find((phase) => phase.temperatureRole === "low-temperature")!;
@@ -18,7 +18,7 @@ describe("phase identity adapter", () => {
   });
 
   it("infers A alpha, intermediate gamma, and B beta in the coupled eutectic-peritectic case", () => {
-    const round = generateRound(5, "normal");
+    const round = FAMILY_POOLS.normal[5](5);
     expect(round.family).toBe("coupled-eutectic-peritectic");
     const adapted = adaptPhaseIdentities(round.puzzle, round.solution);
 
@@ -33,7 +33,7 @@ describe("phase identity adapter", () => {
   });
 
   it("infers the superlattice as an ordered alpha-prime derivative", () => {
-    const round = generateRound(6, "normal");
+    const round = FAMILY_POOLS.normal[6](6);
     expect(round.family).toBe("superlattice");
     const inferred = inferPhaseIdentityInputs(round.puzzle, round.solution);
     const orderedFacts = inferred.inferredFacts.find((facts) => facts.sourceKey === "delta")!;

@@ -19,6 +19,7 @@ export const REACTION_RULES: Record<ReactionType, ReactionRule> = {
   monotectic: { type: "monotectic", title: "Monotectic", coolingEquation: "L₁ → L₂ + α", reactantKinds: ["liquid"], productKinds: ["liquid", "solid"], interiorCompositionSide: "reactants", interiorPhaseSelection: "assemblage-middle" },
   monotectoid: { type: "monotectoid", title: "Monotectoid", coolingEquation: "α₁ → α₂ + β", reactantKinds: ["solid"], productKinds: ["solid", "solid"], interiorCompositionSide: "reactants", interiorPhaseSelection: "assemblage-middle" },
   syntectic: { type: "syntectic", title: "Syntectic", coolingEquation: "L₁ + L₂ → α", reactantKinds: ["liquid", "liquid"], productKinds: ["solid"], interiorCompositionSide: "products", interiorPhaseSelection: "only-solid" },
+  catatectic: { type: "catatectic", title: "Catatectic (metatectic)", coolingEquation: "β → α + L", reactantKinds: ["solid"], productKinds: ["solid", "liquid"], interiorCompositionSide: "reactants", interiorPhaseSelection: "assemblage-middle" },
   metatectic: { type: "metatectic", title: "Metatectic (catatectic)", coolingEquation: "β → α + L", reactantKinds: ["solid"], productKinds: ["solid", "liquid"], interiorCompositionSide: "reactants", interiorPhaseSelection: "assemblage-middle" },
 };
 

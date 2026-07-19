@@ -8,6 +8,7 @@ import type { ConstructionState, ViewportState } from "../domain/schema";
 import {
   activeMilliseconds,
   addGeometry,
+  clearPhaseLabels,
   createLabelingState,
   deleteGeometry,
   deletePoint,
@@ -23,7 +24,6 @@ import {
 import {
   clearConstruction,
   constructionHasProgress,
-  currentStreak,
   hasResumableConstruction,
   loadConstruction,
   loadProfile,
@@ -43,8 +43,8 @@ type Panel = "rules" | "statistics" | "settings";
 
 const DIFFICULTIES: Array<{ id: Difficulty; label: string; detail: string }> = [
   { id: "easy", label: "Easy", detail: "Complete systems · simpler invariants" },
-  { id: "normal", label: "Normal", detail: "Complete systems · expanded transformations" },
-  { id: "hard", label: "Hard", detail: "Immiscibility · spinodal · multi-compound" },
+  { id: "normal", label: "Normal", detail: "Composed systems · smaller reaction budget" },
+  { id: "hard", label: "Hard", detail: "Large systems · full invariant grammar" },
 ];
 
 const FOUNDATIONS = [
@@ -151,6 +151,21 @@ function RulesOverview() {
   </>;
 }
 
+function DifficultyStatistics({ difficulty, history }: { difficulty: typeof DIFFICULTIES[number]; history: SolveRecord[] }) {
+  const solved = history.filter((item) => item.difficulty === difficulty.id && item.outcome === "solved" && item.scored);
+  const noErrorRate = solved.length === 0 ? 0 : Math.round(solved.filter((item) => item.noError).length / solved.length * 100);
+  const bestTime = solved.length === 0 ? "—" : formatElapsed(Math.min(...solved.map((item) => item.elapsedMilliseconds)));
+
+  return <section className="difficulty-statistics" aria-labelledby={`statistics-${difficulty.id}`}>
+    <h3 id={`statistics-${difficulty.id}`}>{difficulty.label}</h3>
+    <div className="stat-grid">
+      <div><strong>{solved.length}</strong><span>Solved</span></div>
+      <div><strong>{noErrorRate}%</strong><span>No-error</span></div>
+      <div><strong>{bestTime}</strong><span>Best time</span></div>
+    </div>
+  </section>;
+}
+
 export function App() {
   const [profile, setProfile] = useState<PlayerProfile>(loadProfile);
   const [difficulty, setDifficulty] = useState<Difficulty>(() => loadProfile().lastDifficulty);
@@ -162,10 +177,13 @@ export function App() {
   const [submitImpact, setSubmitImpact] = useState<{ id: number; kind: "wrong" | "solved" }>();
   const [clock, setClock] = useState(Date.now());
   const [selectedConceptId, setSelectedConceptId] = useState<string>();
+  const [studyingResult, setStudyingResult] = useState(false);
   const history = useRef<ConstructionState[]>([]);
 
   const { puzzle, solution } = round;
-  const overlayOpen = atHome || Boolean(panel) || !profile.onboardingComplete;
+  const failureOpen = state.metrics.scoredAttemptEnded && !state.metrics.continuingUnscored && !state.revealed;
+  const completionOpen = state.solved && !studyingResult;
+  const overlayOpen = atHome || Boolean(panel) || !profile.onboardingComplete || failureOpen || completionOpen;
   const canResume = round.difficulty === difficulty && constructionHasProgress(state)
     ? true
     : hasResumableConstruction(difficulty);
@@ -244,6 +262,7 @@ export function App() {
     setState(loadConstruction(nextRound.puzzle.id, nextDifficulty) ?? createLabelingState(nextRound.puzzle, nextRound.solution));
     setAtHome(false);
     setPanel(undefined);
+    setStudyingResult(false);
     history.current = [];
     updateProfile((current) => ({ ...current, lastDifficulty: nextDifficulty }));
   };
@@ -272,13 +291,6 @@ export function App() {
     setAtHome(true);
   };
 
-  const resetLabels = () => {
-    clearConstruction(difficulty);
-    history.current = [];
-    setState(createLabelingState(puzzle, solution));
-    announce("Round reset");
-  };
-
   const undo = () => {
     const previous = history.current.pop();
     if (!previous || state.solved) return;
@@ -290,6 +302,7 @@ export function App() {
     if (state.solved || state.revealed) return;
     const result = validateSubmit(state, puzzle, solution);
     if (result.status === "solved") {
+      setStudyingResult(false);
       setSubmitImpact((current) => ({ id: (current?.id ?? 0) + 1, kind: "solved" }));
       const submissions = state.metrics.submitCount + 1;
       commit((current) => {
@@ -318,6 +331,7 @@ export function App() {
   };
 
   const revealSolution = () => {
+    setStudyingResult(true);
     commit((current) => ({
       ...pauseTimer(current),
       cells: current.cells.map((cell) => {
@@ -331,9 +345,15 @@ export function App() {
     announce("Solution revealed");
   };
 
+  const continueUnscored = () => {
+    setState((current) => resumeTimer({
+      ...current,
+      metrics: { ...current.metrics, continuingUnscored: true },
+    }));
+    announce("Continuing unscored");
+  };
+
   const elapsed = formatElapsed(activeMilliseconds(state, clock));
-  const solvedHistory = profile.history.filter((item) => item.outcome === "solved" && item.scored);
-  const streak = currentStreak(profile.history);
   const selectedConcept = RULE_CONCEPTS.find((concept) => concept.id === selectedConceptId);
   const setSettings = (settings: GameSettings) => updateProfile((current) => ({ ...current, settings }));
   const openPanel = (next: Panel) => {
@@ -342,7 +362,7 @@ export function App() {
   };
 
   return (
-    <main className={`game-shell ${state.solved || state.revealed ? "is-clean" : ""} ${state.solved ? "is-solved" : ""} ${profile.settings.leftHanded ? "left-handed" : ""}`}>
+    <main className={`game-shell ${state.solved || state.revealed ? "is-clean" : ""} ${state.solved ? "is-solved" : ""} ${difficulty === "hard" ? "is-large-binary" : ""} ${profile.settings.leftHanded ? "left-handed" : ""}`}>
       {/* Paper-theme print filters, matching photographed ink figures: strokes
           stay drafted-straight, but edges erode into the paper fibre and ink
           density varies faintly along the line, like a book reproduction. */}
@@ -399,10 +419,12 @@ export function App() {
               key={puzzle.id}
               state={state}
               puzzle={puzzle}
+              interactionDisabled={failureOpen}
               invalidPointIds={new Set()}
               onPlacePoint={(roleId, value) => commit((current) => placeOrMovePoint(current, roleId, value))}
               onAddGeometry={(value) => commit((current) => addGeometry(current, value))}
               onUpdateGeometry={(value) => commit((current) => updateGeometry(current, value))}
+              onSelectPhase={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))}
               onTogglePhaseInCell={(cellId, phaseId) => commit((current) => togglePhaseInCell(current, cellId, phaseId, puzzle.diagramLabels.map((label) => label.id)))}
               onRemovePhaseFromCell={(cellId, phaseId) => commit((current) => removePhaseFromCell(current, cellId, phaseId))}
               onDeleteGeometry={(geometryId) => commit((current) => deleteGeometry(current, geometryId))}
@@ -412,35 +434,41 @@ export function App() {
               onRejected={announce}
             />
             {submitImpact && <span key={submitImpact.id} className={`submission-impact is-${submitImpact.kind}`} aria-hidden="true" />}
-            {state.metrics.scoredAttemptEnded && !state.metrics.continuingUnscored && !state.revealed && (
-              <div className="failure-actions" aria-label="Scored attempt ended">
-                <button type="button" onClick={() => commit((current) => ({ ...current, metrics: { ...current.metrics, continuingUnscored: true } }))}>Continue</button>
-                <button type="button" onClick={revealSolution}>Reveal</button>
-                <button type="button" onClick={newPuzzle}>New</button>
-              </div>
-            )}
-            {(state.solved || state.revealed) && (
-              <div className="result-sheet" role="dialog" aria-label="Round result">
-                <span className="eyebrow">{state.revealed ? "Solution" : state.metrics.continuingUnscored ? "Unscored" : "Round complete"}</span>
-                <h2>{state.revealed ? "Study the labels" : "Diagram solved"}</h2>
-                <div className="result-grid"><div><strong>{elapsed}</strong><span>Time</span></div><div><strong>{state.metrics.submitCount}</strong><span>Submissions</span></div><div><strong>{puzzle.expectedFieldCount}</strong><span>Fields</span></div></div>
-                <p><strong>{puzzle.title}</strong><br/>Seed {round.seed}</p>
-                <div className="result-actions"><button type="button" onClick={goHome}>Menu</button><button type="button" onClick={newPuzzle}>Next</button></div>
-              </div>
-            )}
         </section>
 
         {feedback && <div className="feedback-toast" role="status" aria-live="polite">{feedback}</div>}
 
-        {!state.solved && !state.revealed && (
+        {!state.solved && !state.revealed && !failureOpen && (
           <footer className="minimal-control-rail">
             <button className="icon-action" type="button" aria-label="Undo" disabled={history.current.length === 0} onClick={undo}>↶</button>
             <PhasePalette phases={puzzle.diagramLabels} activePhaseId={state.activePhaseId} onSelect={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))} onPointerStart={() => undefined} />
+            <button className="clear-all-action" type="button" aria-label="Clear all labels" disabled={!state.cells.some((cell) => cell.phaseOrder.length > 0)} onClick={() => { commit(clearPhaseLabels); announce("All labels cleared"); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 11h10M9 15h6"/><path d="M5 19 19 5"/></svg></button>
             <button className={`erase-action ${state.activeTool === "erase" ? "is-active" : ""}`} type="button" aria-label="Erase labels" aria-pressed={state.activeTool === "erase"} onClick={() => updateTransient((current) => setTool(current, current.activeTool === "erase" ? "label" : "erase"))}>⌫</button>
             <button className="submit-action" type="button" aria-label="Submit labels" onClick={handleSubmit}>✓</button>
           </footer>
         )}
+        {(state.revealed || (state.solved && studyingResult)) && <footer className="review-control-rail" aria-label="Solution controls"><span>{state.revealed ? "Solution shown" : "Diagram solved"}</span><button type="button" onClick={goHome}>Menu</button><button type="button" onClick={newPuzzle}>Next</button></footer>}
       </>}
+
+      {failureOpen && <div className="modal-scrim round-outcome-overlay" role="dialog" aria-modal="true" aria-labelledby="failure-title">
+        <section className="round-outcome-card">
+          <span className="eyebrow">Scored attempt ended</span>
+          <h2 id="failure-title">Choose what happens next</h2>
+          <div className="result-grid"><div><strong>{elapsed}</strong><span>Time</span></div><div><strong>{state.metrics.submitCount}</strong><span>Submissions</span></div><div><strong>{puzzle.expectedFieldCount}</strong><span>Fields</span></div></div>
+          <p><strong>{puzzle.title}</strong><br/>Seed {round.seed}</p>
+          <div className="failure-choice-grid"><button type="button" onClick={continueUnscored}>Continue</button><button type="button" onClick={revealSolution}>Reveal</button><button type="button" onClick={newPuzzle}>New</button><button type="button" onClick={goHome}>Menu</button></div>
+        </section>
+      </div>}
+
+      {completionOpen && <div className="modal-scrim round-outcome-overlay" role="dialog" aria-modal="true" aria-labelledby="completion-title">
+        <section className="round-outcome-card">
+          <span className="eyebrow">{state.metrics.continuingUnscored ? "Unscored" : "Round complete"}</span>
+          <h2 id="completion-title">Diagram solved</h2>
+          <div className="result-grid"><div><strong>{elapsed}</strong><span>Time</span></div><div><strong>{state.metrics.submitCount}</strong><span>Submissions</span></div><div><strong>{puzzle.expectedFieldCount}</strong><span>Fields</span></div></div>
+          <p><strong>{puzzle.title}</strong><br/>Seed {round.seed}</p>
+          <div className="completion-choice-grid"><button type="button" onClick={() => setStudyingResult(true)}>Study diagram</button><button type="button" onClick={goHome}>Menu</button><button type="button" onClick={newPuzzle}>Next</button></div>
+        </section>
+      </div>}
 
       {!atHome && !profile.onboardingComplete && (
         <div className="modal-scrim onboarding" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
@@ -472,7 +500,7 @@ export function App() {
               <div className="recognition-cue"><strong>Recognise it</strong><span>{selectedConcept.cue}</span></div>
             </div> : <><RulesOverview/><ConceptGrid concepts={RULE_CONCEPTS} onSelect={(concept) => setSelectedConceptId(concept.id)}/></>)}
 
-            {panel === "statistics" && <><div className="stat-grid"><div><strong>{solvedHistory.length}</strong><span>Solved</span></div><div><strong>{streak}</strong><span>Day streak</span></div><div><strong>{solvedHistory.length ? Math.round(solvedHistory.filter((item) => item.noError).length / solvedHistory.length * 100) : 0}%</strong><span>No-error</span></div><div><strong>{solvedHistory.length ? formatElapsed(Math.min(...solvedHistory.map((item) => item.elapsedMilliseconds))) : "—"}</strong><span>Best time</span></div></div><div className="recent-list"><h3>Recent</h3>{profile.history.length === 0 ? <p>No scored rounds yet.</p> : [...profile.history].reverse().slice(0, 8).map((item) => <div key={`${item.puzzleId}:${item.completedAt}`}><span>{item.difficulty} · {item.family.replaceAll("-", " ")}</span><small>{item.outcome} · {formatElapsed(item.elapsedMilliseconds)}</small></div>)}</div></>}
+            {panel === "statistics" && <><div className="difficulty-statistics-list">{DIFFICULTIES.map((item) => <DifficultyStatistics key={item.id} difficulty={item} history={profile.history}/>)}</div><div className="recent-list"><h3>Recent</h3>{profile.history.length === 0 ? <p>No scored rounds yet.</p> : [...profile.history].reverse().slice(0, 8).map((item) => <div key={`${item.puzzleId}:${item.completedAt}`}><span>{item.difficulty} · {item.family.replaceAll("-", " ")}</span><small>{item.outcome} · {formatElapsed(item.elapsedMilliseconds)}</small></div>)}</div></>}
 
             {panel === "settings" && <div className="settings-list"><label><span>Theme<small>Dark, light, or follow the system</small></span><select value={profile.settings.theme} onChange={(event) => setSettings({ ...profile.settings, theme: event.target.value as GameSettings["theme"] })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><label><span>Reduce motion<small>Minimise transitions and pops</small></span><input type="checkbox" checked={profile.settings.reducedMotion} onChange={(event) => setSettings({ ...profile.settings, reducedMotion: event.target.checked })}/></label><label><span>Left-handed controls<small>Move the submit action to the left</small></span><input type="checkbox" checked={profile.settings.leftHanded} onChange={(event) => setSettings({ ...profile.settings, leftHanded: event.target.checked })}/></label></div>}
           </section>

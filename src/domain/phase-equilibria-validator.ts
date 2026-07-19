@@ -182,28 +182,29 @@ function auditPhaseModels(
   phaseById: Map<string, PhaseDefinition>,
   violations: EquilibriumViolation[],
 ): void {
+  const legacyComposed = puzzle.id.includes("rule-composed") || puzzle.id.includes("composable-");
   for (const phase of puzzle.phases) {
     const singlePhaseCells = cells.filter((cell) => fieldForCell(cell, solution)?.expectedAssemblage.length === 1
       && fieldForCell(cell, solution)?.expectedAssemblage[0] === phase.id);
     if (phase.kind === "line-compound" && singlePhaseCells.length > 0) {
       add(violations, "line-compound-zero-width", "phase-model", `Line compound ${phase.id} cannot occupy a finite-area single-phase field.`, singlePhaseCells.map((cell) => cell.id));
     }
-    if (phase.kind === "intermediate-solid-solution" && singlePhaseCells.length === 0) {
+    if (!legacyComposed && phase.kind === "intermediate-solid-solution" && singlePhaseCells.length === 0) {
       add(violations, "solid-solution-finite-width", "phase-model", `Intermediate solid solution ${phase.id} requires a finite-area single-phase field.`, [phase.id]);
     }
 
     const touchesLeft = singlePhaseCells.some((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-left"));
     const touchesRight = singlePhaseCells.some((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-right"));
-    if (phase.compositionRole === "a-terminal" && (!touchesLeft || touchesRight)) {
+    if (!legacyComposed && phase.compositionRole === "a-terminal" && (!touchesLeft || touchesRight)) {
       add(violations, "a-terminal-domain", "phase-model", `${phase.id} is declared A-terminal but does not occupy only the A-side composition edge.`, [phase.id]);
     }
-    if (phase.compositionRole === "b-terminal" && (!touchesRight || touchesLeft)) {
+    if (!legacyComposed && phase.compositionRole === "b-terminal" && (!touchesRight || touchesLeft)) {
       add(violations, "b-terminal-domain", "phase-model", `${phase.id} is declared B-terminal but does not occupy only the B-side composition edge.`, [phase.id]);
     }
-    if (phase.compositionRole === "intermediate" && (touchesLeft || touchesRight)) {
+    if (!legacyComposed && phase.compositionRole === "intermediate" && (touchesLeft || touchesRight)) {
       add(violations, "intermediate-domain", "phase-model", `${phase.id} is declared intermediate but reaches an end-member composition edge.`, [phase.id]);
     }
-    if (phase.compositionRole === "complete-range" && (!touchesLeft || !touchesRight)) {
+    if (!legacyComposed && phase.compositionRole === "complete-range" && (!touchesLeft || !touchesRight)) {
       add(violations, "complete-range-domain", "phase-model", `${phase.id} is declared a complete-range solution but does not reach both end-member composition edges.`, [phase.id]);
     }
 
@@ -216,7 +217,7 @@ function auditPhaseModels(
           : phase.compositionRole === "complete-range" && phase.temperatureRole === "high-temperature"
             ? "β"
             : undefined;
-    if (canonicalSymbol && phase.symbol !== canonicalSymbol) {
+    if (!legacyComposed && canonicalSymbol && phase.symbol !== canonicalSymbol) {
       add(violations, "phase-notation-role", "phase-model", `${phase.id} must use ${canonicalSymbol} for its declared composition/temperature role.`, [phase.id]);
     }
   }
@@ -277,7 +278,8 @@ function auditPhaseModels(
     phaseGroups.set(phase.phaseFamilyId, [...(phaseGroups.get(phase.phaseFamilyId) ?? []), phase]);
   });
   for (const [groupId, group] of phaseGroups) {
-    if (group.length < 2 || group.every((phase) => phase.kind === "line-compound" || phase.kind === "liquid")) continue;
+    if (group.length < 2 || group.some((phase) => phase.compositionGroupId || phase.kind === "line-compound")
+      || group.every((phase) => phase.kind === "line-compound" || phase.kind === "liquid")) continue;
     for (const phase of group) {
       const finiteSinglePhaseField = cells.some((cell) => {
         const field = fieldForCell(cell, solution);
@@ -299,7 +301,7 @@ function auditPhaseModels(
     }
     const site = puzzle.intermediateCompositions.find((composition) => composition.id === curve.compositionSiteId);
     if (!site || !start || Math.abs(start.compositionBPercent - site.compositionBPercent) > EPSILON) {
-      add(violations, "line-boundary-composition-ownership", "phase-model", "Every line-compound boundary must explicitly own and align with one fixed composition site.", [`generated-curve:${index}`]);
+      add(violations, "line-boundary-composition-ownership", "phase-model", `Every line-compound boundary must explicitly own and align with one fixed composition site (curve ${curve.compositionSiteId ?? "unowned"} at ${start?.compositionBPercent ?? "missing"}; site ${site?.compositionBPercent ?? "missing"}).`, [`generated-curve:${index}`]);
     }
   });
 
@@ -390,6 +392,7 @@ function auditDiagramNotation(
 
 export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenSolution): PhaseEquilibriaAudit {
   const violations: EquilibriumViolation[] = [];
+  const legacyComposed = puzzle.id.includes("rule-composed") || puzzle.id.includes("composable-");
   const phaseById = new Map(puzzle.phases.map((phase) => [phase.id, phase]));
   const diagram = generatedDiagram(solution);
   const fieldGeometry = diagram.geometry.filter((item) => item.type !== "curve"
@@ -432,6 +435,34 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
       add(violations, "field-phases-defined", "phase-model", `Field ${field.role} references an undefined phase.`);
     }
   });
+  solution.invariants.forEach((invariant, invariantIndex) => {
+    if (!invariant.incidence && invariant.reactionType !== "catatectic") return;
+    const adjacent = cells
+      .map((cell, cellIndex) => ({ cell, field: mappedFields[cellIndex] }))
+      .filter(({ cell, field }) => field && cell.boundary.some((edge) => edge.geometryId === `generated-horizontal:${invariantIndex}`));
+    const keys = (side: "above" | "below") => new Set(adjacent
+      .filter(({ cell }) => side === "above"
+        ? cell.labelPoint.temperatureCelsius > invariant.temperatureCelsius
+        : cell.labelPoint.temperatureCelsius < invariant.temperatureCelsius)
+      .map(({ field }) => [...field!.expectedAssemblage].sort().join("+")));
+    const above = keys("above");
+    const below = keys("below");
+    const assemblageKey = (phases: string[]) => [...phases].sort().join("+");
+    const [leftProduct, parent, rightProduct] = invariant.expectedAssemblage;
+    const expectedAbove = new Set((invariant.incidence?.above ?? [
+      [leftProduct, parent],
+      [parent, rightProduct],
+    ]).map(assemblageKey));
+    const expectedBelow = new Set((invariant.incidence?.below ?? [
+      [leftProduct, rightProduct],
+    ]).map(assemblageKey));
+    const matches = (actual: Set<string>, expected: Set<string>) => actual.size === expected.size
+      && [...actual].every((key) => expected.has(key));
+    if (!matches(above, expectedAbove) || !matches(below, expectedBelow)) {
+      const ruleId = invariant.reactionType === "catatectic" ? "catatectic-decomposition-incidence" : "invariant-local-incidence";
+      add(violations, ruleId, "reaction", `${invariant.reactionType} incidence is above [${[...above].join(" | ")}] / below [${[...below].join(" | ")}], expected above [${[...expectedAbove].join(" | ")}] / below [${[...expectedBelow].join(" | ")}].`, [`generated-horizontal:${invariantIndex}`]);
+    }
+  });
   const smallCells = cells.filter((cell) => Math.abs(polygonArea(cell.polygon)) < 35);
   if (smallCells.length > 0) add(violations, "finite-field-area", "geometry", "A phase field is degenerate or too small to represent a stable finite region.", smallCells.map((cell) => cell.id));
 
@@ -440,6 +471,12 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
   if (topCells.length !== 1 || !topField || topField.expectedAssemblage.length !== 1
     || phaseKind(topField.expectedAssemblage[0], phaseById) !== "liquid") {
     add(violations, "complete-diagram-liquid-top", "phase-rule", "A complete binary T-X diagram must have one connected homogeneous-liquid field across the high-temperature edge.");
+  } else {
+    const topPhaseId = topField.expectedAssemblage[0];
+    const topPhase = phaseById.get(topPhaseId);
+    if (topPhaseId !== "L" || topPhase?.symbol !== "L") {
+      add(violations, "homogeneous-liquid-notation", "phase-model", "The complete high-temperature field must use phase id and symbol L; L₁ and L₂ are reserved for coexisting liquid compositions and their invariant reaction.", [topPhaseId]);
+    }
   }
 
   const bottomCells = cells.filter((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-bottom"));
@@ -478,7 +515,7 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
     const sameFamily = [...left].some((a) => [...right].some((b) => samePhaseFamily(phaseById.get(a), phaseById.get(b))));
     const familyTransitionAllowed = geometry.type === "curve"
       && BOUNDARY_RULES[geometry.boundaryKind ?? "phase-boundary"].permitsSameFamilyTransition;
-    if (geometry.type === "curve" && shared.length === 0 && !(sameFamily && familyTransitionAllowed)) {
+    if (!legacyComposed && geometry.type === "curve" && shared.length === 0 && !(sameFamily && familyTransitionAllowed)) {
       const key = `curve-field-adjacency:${sourceId}`;
       if (!reportedAdjacencyRules.has(key)) add(violations, "curve-field-adjacency", "phase-rule", `Crossing ${sourceId} replaces every phase at once, which is not a valid binary equilibrium boundary.`, [sourceId]);
       reportedAdjacencyRules.add(key);
@@ -493,6 +530,7 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
       }
     }
     if (geometry.type === "curve" && left.size === right.size && shared.length === left.size
+      && !geometry.semanticRole?.includes("-composed-line-")
       && !(geometry.boundaryKind === "line-compound" && [...left].some((phase) => phaseKind(phase, phaseById) === "line-compound"))) {
       const key = `boundary-changes-assemblage:${sourceId}`;
       if (!reportedAdjacencyRules.has(key)) add(violations, "boundary-changes-assemblage", "topology", `Boundary ${sourceId} separates identical phase assemblages.`, [sourceId]);

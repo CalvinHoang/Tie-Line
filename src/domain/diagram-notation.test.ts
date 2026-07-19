@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { generateRound } from "./generator";
+import { FAMILY_POOLS, generateRound } from "./generator";
+import { adaptPhaseIdentities } from "./phase-identity-adapter";
 
 describe("diagram notation projection", () => {
   it("keeps monotectoid global alpha separate from alpha branch notation", () => {
-    const round = generateRound(8, "normal");
+    const family = FAMILY_POOLS.normal[8](8);
+    const adapted = adaptPhaseIdentities(family.puzzle, family.solution);
+    const round = { ...family, puzzle: adapted.puzzle, solution: adapted.solution };
     expect(round.family).toBe("monotectoid");
     const invariant = round.solution.invariants.find((item) => item.reactionType === "monotectoid")!;
     const parent = invariant.reactantPhaseIds![0];
@@ -27,10 +30,10 @@ describe("diagram notation projection", () => {
   });
 
   it("uses global L above a monotectic but L1/L2 for its invariant branches", () => {
-    const round = generateRound(2, "hard");
-    expect(round.family).toBe("monotectic");
+    const round = generateRound(5, "hard");
+    expect(round.family).toBe("rule-composed");
     const invariant = round.solution.invariants.find((item) => item.reactionType === "monotectic")!;
-    const top = round.solution.expectedFields.find((field) => field.role === "liquid")!;
+    const top = round.solution.expectedFields.find((field) => field.expectedAssemblage.length === 1 && field.expectedAssemblage[0] === "L")!;
     expect(top.expectedAssemblage).toEqual(["L"]);
     expect(top.expectedLabelIds).toEqual(["L"]);
     expect(round.puzzle.diagramLabels.find((label) => label.id === "L")?.symbol).toBe("L");

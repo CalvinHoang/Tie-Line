@@ -11,7 +11,7 @@ const ALL_REACTIONS: ReactionType[] = [
   "monotectic",
   "monotectoid",
   "syntectic",
-  "metatectic",
+  "catatectic",
 ];
 
 describe("generated-round local thermodynamic audit", () => {
@@ -32,7 +32,7 @@ describe("generated-round local thermodynamic audit", () => {
   });
 
   it("rejects a deliberately inverted cooling reaction", () => {
-    const round = structuredClone(generateRound(2, "hard"));
+    const round = structuredClone(generateRound(5, "hard"));
     const target = round.solution.invariants.find((invariant) => invariant.reactionType === "monotectic")!;
     const originalReactants = target.reactantPhaseIds!;
     target.reactantPhaseIds = target.productPhaseIds;

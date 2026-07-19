@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { DiagramLabelDefinition, PointRoleDefinition, ToolId } from "../domain/schema";
 
 const tools: Array<{ id: ToolId; glyph: string; label: string }> = [
@@ -45,5 +46,38 @@ export function PhasePalette({ phases, activePhaseId, onSelect, onPointerStart, 
   onPointerMove?: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onPointerEnd?: (event: React.PointerEvent<HTMLButtonElement>) => void;
 }) {
-  return <div className="symbol-palette phase-palette" role="toolbar" aria-label="Phase symbols">{phases.map((phase) => <button key={phase.id} type="button" className={`phase-${phase.colorPhaseId} ${activePhaseId === phase.id ? "is-active" : ""}`} aria-label={`${phase.name} phase`} aria-pressed={activePhaseId === phase.id} onClick={() => onSelect(phase.id)} onPointerDown={(event) => onPointerStart(event, phase.id)} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}>{phase.symbol}</button>)}</div>;
+  const [expanded, setExpanded] = useState(false);
+  const active = phases.find((phase) => phase.id === activePhaseId) ?? phases[0];
+  const activeIndex = Math.max(0, phases.findIndex((phase) => phase.id === active?.id));
+  const choose = (phaseId: string) => {
+    onSelect(phaseId);
+    setExpanded(false);
+  };
+  return <div className={`phase-selector ${expanded ? "is-expanded" : ""}`}>
+    <button
+      type="button"
+      className={`phase-selector-trigger phase-${active?.colorPhaseId ?? "none"}`}
+      aria-label={`Choose phase${active ? `, currently ${active.name}` : ""}`}
+      aria-expanded={expanded}
+      onClick={() => setExpanded((current) => !current)}
+    >
+      <span className="selected-phase-symbol" aria-hidden="true">{active?.symbol ?? "—"}</span>
+      <span className="selected-phase-name">{active?.name ?? "Phase"}</span>
+      <span className="phase-count">{activeIndex + 1}/{phases.length}</span>
+    </button>
+    {expanded && <div className="phase-grid" role="toolbar" aria-label="Phase symbols">{phases.map((phase) => {
+      return <button
+        key={phase.id}
+        type="button"
+        className={`phase-option phase-${phase.colorPhaseId} ${activePhaseId === phase.id ? "is-active" : ""}`}
+        aria-label={`${phase.name} phase`}
+        aria-pressed={activePhaseId === phase.id}
+        onClick={() => choose(phase.id)}
+        onPointerDown={(event) => onPointerStart(event, phase.id)}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+      ><span className="phase-option-symbol">{phase.symbol}</span><span className="phase-option-name">{phase.name}</span></button>;
+    })}</div>}
+  </div>;
 }

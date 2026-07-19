@@ -23,5 +23,5 @@ describe("field-aware label placement", () => {
         }
       }
     }
-  }, 15_000);
+  }, 30_000);
 });

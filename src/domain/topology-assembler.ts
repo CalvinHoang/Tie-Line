@@ -136,6 +136,7 @@ export const MOTIF_ARCHETYPES: Readonly<Record<ReactionType, MotifDescriptor>> =
   monotectic: { type: "monotectic", liquidImmiscibility: true, intermediateSolid: false, polymorphicSolidFamily: false, phaseCount: 5 },
   monotectoid: { type: "monotectoid", liquidImmiscibility: false, intermediateSolid: true, polymorphicSolidFamily: true, phaseCount: 4 },
   syntectic: { type: "syntectic", liquidImmiscibility: true, intermediateSolid: true, polymorphicSolidFamily: false, phaseCount: 6 },
+  catatectic: { type: "catatectic", liquidImmiscibility: false, intermediateSolid: true, polymorphicSolidFamily: false, phaseCount: 4 },
   metatectic: { type: "metatectic", liquidImmiscibility: false, intermediateSolid: true, polymorphicSolidFamily: false, phaseCount: 4 },
 };
 
@@ -288,6 +289,7 @@ function makeMotif(type: ReactionType, seed: number): PhaseTopologyGraph {
       );
       node = invariant(type, ["L1", "L2"], ["gamma"], [["L1", left], ["gamma", middle], ["L2", right]], "gamma");
       break;
+    case "catatectic":
     case "metatectic":
       phases.push(phase("gamma", "solid", "intermediate", [middle - 14, middle + 14], false, false));
       node = invariant(type, ["gamma"], ["alpha", "L"], [["alpha", left], ["gamma", middle], ["L", right]], "gamma");

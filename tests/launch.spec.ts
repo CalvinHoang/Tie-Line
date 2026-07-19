@@ -21,6 +21,12 @@ async function startGame(page: import("@playwright/test").Page) {
   await expect(page.getByRole("application", { name: /phase diagram board/i })).toBeVisible();
 }
 
+async function openPhaseSelector(page: import("@playwright/test").Page) {
+  const chooser = page.getByRole("button", { name: /Choose phase/i });
+  if (await chooser.getAttribute("aria-expanded") !== "true") await chooser.click();
+  return page.getByRole("toolbar", { name: "Phase symbols" });
+}
+
 async function forceGeneratedSeed(page: import("@playwright/test").Page, seed: number) {
   await page.addInitScript((forcedSeed) => {
     const original = window.crypto.getRandomValues.bind(window.crypto);
@@ -70,7 +76,7 @@ test("opens a complete generated diagram ready for labels", async ({ page }) => 
   const board = page.getByRole("application", { name: /phase diagram board/i });
   await expect(board).toBeVisible();
   await expect(page.getByRole("button", { name: "Submit labels" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Erase labels" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear all labels" })).toBeVisible();
   expect(await board.locator(".geometry-line").count()).toBeGreaterThan(0);
   expect(await board.locator(".field-target").count()).toBeGreaterThan(1);
   expect(await board.locator(".point-dot").count()).toBeGreaterThan(2);
@@ -79,7 +85,7 @@ test("opens a complete generated diagram ready for labels", async ({ page }) => 
   await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");
 });
 
-test("identifies intermediate compositions on the bottom axis without revealing their phase symbols", async ({ page }) => {
+test("links intermediate compositions to their phase symbols on the bottom axis", async ({ page }) => {
   await forceGeneratedSeed(page, 0);
   await page.evaluate(() => {
     const profile = JSON.parse(localStorage.getItem("tie-line:full-1:profile") ?? "{}") as { lastDifficulty?: string };
@@ -88,13 +94,17 @@ test("identifies intermediate compositions on the bottom axis without revealing 
   await page.reload();
   await startGame(page);
   const labels = page.locator(".intermediate-composition-label");
-  await expect(labels).toHaveCount(2);
-  await expect(page.locator('.intermediate-composition-label[data-composition="gamma"]')).toHaveText("A₂B");
-  await expect(page.locator('.intermediate-composition-label[data-composition="delta"]')).toHaveText("AB₂");
+  expect(await labels.count()).toBeGreaterThanOrEqual(5);
+  expect(await labels.count()).toBeLessThanOrEqual(8);
+  const formulaLabels = await labels.allTextContents();
+  expect(new Set(formulaLabels).size).toBe(formulaLabels.length);
+  expect(formulaLabels.every((label) => label.includes("A") && label.includes("B"))).toBe(true);
+  expect(await page.locator(".intermediate-phase-symbol").count()).toBeGreaterThanOrEqual(await labels.count());
+  await expect(page.locator(".axis-t")).toHaveCount(0);
   await expect(page.locator(".phase-label")).toHaveCount(0);
 });
 
-test("keeps an incongruent compound phase hidden until input while marking AB on the axis", async ({ page }) => {
+test("shows an incongruent compound association at AB without filling diagram fields", async ({ page }) => {
   await forceGeneratedSeed(page, 1);
   await page.evaluate(() => {
     const profile = JSON.parse(localStorage.getItem("tie-line:full-1:profile") ?? "{}") as { lastDifficulty?: string };
@@ -102,8 +112,10 @@ test("keeps an incongruent compound phase hidden until input while marking AB on
   });
   await page.reload();
   await startGame(page);
-  await expect(page.getByRole("button", { name: "AB compound phase", exact: true })).toHaveText(/[γδεζηθκλ]/);
+  await openPhaseSelector(page);
+  await expect(page.locator(".phase-grid .phase-gamma .phase-option-symbol")).toHaveText(/[γδεζηθκλ]/);
   await expect(page.locator('.intermediate-composition-label[data-composition="gamma"]')).toHaveText("AB");
+  await expect(page.locator('.composition-phase-association[data-composition="gamma"] .intermediate-phase-symbol')).toHaveCount(1);
   await expect(page.locator(".phase-label")).toHaveCount(0);
 });
 
@@ -111,30 +123,33 @@ test("embeds a peritectoid below a complete eutectic melting system", async ({ p
   await forceGeneratedSeed(page, 3);
   await page.reload();
   await startGame(page);
+  await openPhaseSelector(page);
   const board = page.getByRole("application", { name: /phase diagram board/i });
-  await expect(page.getByRole("button", { name: "Homogeneous liquid phase", exact: true })).toContainText("L");
-  await expect(page.getByRole("button", { name: "AB compound phase", exact: true })).toHaveText(/[γδεζηθκλ]/);
+  await expect(page.locator(".phase-grid .phase-L .phase-option-symbol")).toHaveText("L");
+  await expect(page.locator(".phase-grid .phase-gamma .phase-option-symbol")).toHaveText(/[γδεζηθκλ]/);
   await expect(board.locator(".invariant-line")).toHaveCount(2);
   await expect(board.locator(".field-target")).toHaveCount(6);
   await expect(board.locator('.intermediate-composition-label[data-composition="gamma"]')).toHaveText("AB");
 });
 
-test("treats a liquid spinodal as a stability overlay inside one two-liquid field", async ({ page }) => {
-  await forceGeneratedSeed(page, 3);
+test("composes a syntectic liquid-immiscibility kernel into a large Hard system", async ({ page }) => {
+  await forceGeneratedSeed(page, 7);
   await page.evaluate(() => {
     const profile = JSON.parse(localStorage.getItem("tie-line:full-1:profile") ?? "{}") as { lastDifficulty?: string };
     localStorage.setItem("tie-line:full-1:profile", JSON.stringify({ ...profile, lastDifficulty: "hard" }));
   });
   await page.reload();
   await startGame(page);
+  await openPhaseSelector(page);
   const board = page.getByRole("application", { name: /phase diagram board/i });
-  await expect(board.locator(".field-target")).toHaveCount(8);
-  await expect(board.locator(".geometry-line.is-stability-guide")).toHaveCount(2);
-  await expect(board.locator(".spinodal-unstable-overlay")).toHaveCount(1);
+  expect(await board.locator(".field-target").count()).toBeGreaterThanOrEqual(16);
+  expect(await board.locator(".invariant-line").count()).toBeGreaterThanOrEqual(6);
+  await expect(page.getByRole("button", { name: "Liquid 1 phase", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Liquid 2 phase", exact: true })).toBeVisible();
 });
 
 test("uses reaction-role liquid notation for a monotectic", async ({ page }) => {
-  await forceGeneratedSeed(page, 2);
+  await forceGeneratedSeed(page, 5);
   await page.evaluate(() => {
     const profile = JSON.parse(localStorage.getItem("tie-line:full-1:profile") ?? "{}") as { lastDifficulty?: string };
     localStorage.setItem("tie-line:full-1:profile", JSON.stringify({ ...profile, lastDifficulty: "hard" }));
@@ -149,7 +164,7 @@ test("uses reaction-role liquid notation for a monotectic", async ({ page }) => 
 });
 
 test("separates global alpha fields from monotectoid branch notation", async ({ page }) => {
-  await forceGeneratedSeed(page, 8);
+  await forceGeneratedSeed(page, 6);
   await page.reload();
   await startGame(page);
   const symbols = await page.locator(".phase-palette button").allTextContents();
@@ -168,10 +183,11 @@ test("shows finite terminal solid-solution fields for limited solubility", async
   await forceGeneratedSeed(page, 2);
   await page.evaluate(() => {
     const profile = JSON.parse(localStorage.getItem("tie-line:full-1:profile") ?? "{}") as { lastDifficulty?: string };
-    localStorage.setItem("tie-line:full-1:profile", JSON.stringify({ ...profile, lastDifficulty: "normal" }));
+    localStorage.setItem("tie-line:full-1:profile", JSON.stringify({ ...profile, lastDifficulty: "easy" }));
   });
   await page.reload();
   await startGame(page);
+  await openPhaseSelector(page);
   const board = page.getByRole("application", { name: /phase diagram board/i });
   await expect(board.locator(".field-target")).toHaveCount(6);
   await expect(board.locator(".field-texture.texture-partial-solubility")).toHaveCount(2);
@@ -179,33 +195,35 @@ test("shows finite terminal solid-solution fields for limited solubility", async
   await expect(page.getByRole("button", { name: "B-rich terminal solid solution phase", exact: true })).toBeVisible();
 });
 
-for (const [name, seed, fields, textureSelector, textures] of [
-  ["subsolidus polymorphism", 4, 5, ".field-texture.texture-complete-solid-solution", 2],
-  ["coupled eutectic-peritectic system", 5, 9, ".field-texture.texture-partial-solubility", 3],
-  ["superlattice ordering", 6, 4, ".field-texture:is(.texture-complete-solid-solution, .texture-ordered-solid-solution)", 2],
+for (const [name, seed, fields, invariants] of [
+  ["eutectoid decomposition", 2, 7, 2],
+  ["catatectic decomposition", 4, 11, 4],
+  ["monotectoid decomposition", 6, 7, 2],
 ] as const) {
-  test(`renders ${name} with finite solid-solution fields`, async ({ page }) => {
+  test(`renders composed ${name} in Normal`, async ({ page }) => {
     await forceGeneratedSeed(page, seed);
-    await page.reload();
-    await startGame(page);
+  await page.reload();
+  await startGame(page);
+    await openPhaseSelector(page);
     const board = page.getByRole("application", { name: /phase diagram board/i });
     await expect(board.locator(".field-target")).toHaveCount(fields);
-    await expect(board.locator(textureSelector)).toHaveCount(textures);
+    await expect(board.locator(".invariant-line")).toHaveCount(invariants);
+    expect(await page.locator(".intermediate-composition-label").count()).toBeGreaterThanOrEqual(1);
   });
 }
 
 test("uses conventional temperature notation for an unanchored complete-solution polymorph", async ({ page }) => {
-  await forceGeneratedSeed(page, 4);
+  await forceGeneratedSeed(page, 11);
   await page.reload();
   await startGame(page);
-  const highTemperature = page.getByRole("button", { name: "High-temperature complete-range solid solution phase", exact: true });
-  const lowTemperature = page.getByRole("button", { name: "Low-temperature complete-range solid solution phase", exact: true });
+  const highTemperature = page.getByRole("button", { name: "High-temperature solid solution phase", exact: true });
+  const lowTemperature = page.getByRole("button", { name: "Low-temperature solid solution phase", exact: true });
   await expect(highTemperature).toHaveText("β");
   await expect(lowTemperature).toHaveText("α");
 });
 
 test("derives coupled-system symbols from A-side, intermediate, and B-side composition roles", async ({ page }) => {
-  await forceGeneratedSeed(page, 5);
+  await forceGeneratedSeed(page, 12);
   await page.reload();
   await startGame(page);
   await expect(page.getByRole("button", { name: "A-rich terminal solid solution phase", exact: true })).toHaveText("α");
@@ -221,18 +239,19 @@ test("lets the player label a generated phase field", async ({ page }) => {
   const box = await field.boundingBox();
   if (!box) throw new Error("Generated field is unavailable");
   // Use whichever first inventory phase the generated family activates by default.
-  const activePhase = page.getByRole("toolbar", { name: "Phase symbols" }).locator('button[aria-pressed="true"]');
-  const activeSymbol = (await activePhase.textContent())?.trim();
+  const phaseToolbar = await openPhaseSelector(page);
+  const activePhase = phaseToolbar.locator('button[aria-pressed="true"]');
+  const activeSymbol = (await activePhase.locator(".phase-option-symbol").textContent())?.trim();
   if (!activeSymbol) throw new Error("Active phase symbol is unavailable");
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(board.locator(".phase-label")).toHaveCount(1);
   const anchor = board.locator(".phase-label-position").first();
   await expect(anchor).toHaveAttribute("data-fits-field", "true");
   const centreBefore = [await anchor.getAttribute("data-anchor-x"), await anchor.getAttribute("data-anchor-y")];
-  const availablePhases = page.getByRole("toolbar", { name: "Phase symbols" }).locator('button:not([aria-pressed="true"])');
+  const availablePhases = phaseToolbar.locator('button:not([aria-pressed="true"])');
   expect(await availablePhases.count()).toBeGreaterThan(0);
   const addedPhase = availablePhases.first();
-  const addedSymbol = (await addedPhase.textContent())?.trim();
+  const addedSymbol = (await addedPhase.locator(".phase-option-symbol").textContent())?.trim();
   if (!addedSymbol) throw new Error("Additional phase symbol is unavailable");
   await addedPhase.click();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
@@ -266,7 +285,12 @@ test("preserves elapsed time when the scored attempt ends", async ({ page }) => 
   await submit.click();
   await expect(page.getByLabel("1 submissions remaining")).toBeVisible();
   await submit.click();
-  await expect(page.getByLabel("Scored attempt ended")).toBeVisible();
+  const outcome = page.getByRole("dialog", { name: "Choose what happens next" });
+  await expect(outcome).toBeVisible();
+  for (const name of ["Continue", "Reveal", "New", "Menu"]) {
+    await expect(outcome.getByRole("button", { name, exact: true })).toBeVisible();
+  }
+  await expect(page.getByRole("button", { name: "Submit labels" })).toHaveCount(0);
   await expect(page.locator("time")).not.toHaveText("00:00");
 });
 
@@ -290,19 +314,22 @@ test("new generated diagram changes the seed and keeps geometry locked", async (
   await page.getByRole("button", { name: "Start", exact: true }).click();
   const after = await page.evaluate(() => localStorage.getItem("tie-line:full-1:seed:normal"));
   expect(after).not.toBe(before);
-  await expect(page.getByRole("button", { name: "Erase labels" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear all labels" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Point mode" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Curve mode" })).toHaveCount(0);
 });
 
 test("switches to a valid generated hard diagram", async ({ page }) => {
   await startGame(page);
+  const normalFieldCount = await page.locator(".field-target").count();
   await page.getByRole("button", { name: "Main menu", exact: true }).click();
   await page.getByRole("button", { name: "Next difficulty", exact: true }).click();
   await page.getByRole("button", { name: "Start", exact: true }).click();
   const board = page.getByRole("application", { name: /phase diagram board/i });
-  expect(await board.locator(".field-target").count()).toBeGreaterThan(1);
-  expect(await page.getByRole("toolbar", { name: "Phase symbols" }).locator("button").count()).toBeGreaterThanOrEqual(3);
+  expect(await board.locator(".field-target").count()).toBeGreaterThan(normalFieldCount);
+  expect(await board.locator(".field-target").count()).toBeGreaterThanOrEqual(15);
+  expect(await board.locator(".invariant-line").count()).toBeGreaterThanOrEqual(4);
+  expect(await page.locator(".intermediate-composition-label").count()).toBeGreaterThanOrEqual(4);
 });
 
 test("offers complete reference rules without search or practice", async ({ page }) => {

@@ -87,7 +87,7 @@ export function createLabelingState(
 }
 
 export function activeMilliseconds(state: ConstructionState, now = Date.now()): number {
-  if (state.solved || state.metrics.scoredAttemptEnded || !state.metrics.timerStartedAt) {
+  if (state.solved || (state.metrics.scoredAttemptEnded && !state.metrics.continuingUnscored) || !state.metrics.timerStartedAt) {
     return state.metrics.activeMilliseconds;
   }
   return state.metrics.activeMilliseconds + Math.max(0, now - state.metrics.timerStartedAt);
@@ -106,7 +106,7 @@ export function pauseTimer(state: ConstructionState, now = Date.now()): Construc
 }
 
 export function resumeTimer(state: ConstructionState, now = Date.now()): ConstructionState {
-  if (state.solved || state.metrics.scoredAttemptEnded || state.metrics.timerStartedAt) return state;
+  if (state.solved || (state.metrics.scoredAttemptEnded && !state.metrics.continuingUnscored) || state.metrics.timerStartedAt) return state;
   return { ...state, metrics: { ...state.metrics, timerStartedAt: now } };
 }
 
@@ -207,6 +207,18 @@ export function removePhaseFromCell(state: ConstructionState, cellId: string, ph
       ? { ...cell, phaseOrder: cell.phaseOrder.filter((phase) => phase !== phaseId) }
       : cell),
     metrics: { ...state.metrics, phaseDeleteCount: state.metrics.phaseDeleteCount + 1 },
+  };
+}
+
+export function clearPhaseLabels(state: ConstructionState): ConstructionState {
+  const removedCount = state.cells.reduce((total, cell) => total + cell.phaseOrder.length, 0);
+  if (removedCount === 0) return state;
+  return {
+    ...state,
+    activeTool: "label",
+    selectedElementId: undefined,
+    cells: state.cells.map((cell) => ({ ...cell, phaseOrder: [] })),
+    metrics: { ...state.metrics, phaseDeleteCount: state.metrics.phaseDeleteCount + removedCount },
   };
 }
 
