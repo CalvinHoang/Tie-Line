@@ -46,6 +46,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .game-shell.is-large-binary .invariant-line { stroke-width: 2.35; }
 
 .top-rail {
+  position: relative;
   min-height: 54px;
   display: flex;
   align-items: center;
@@ -53,7 +54,9 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   padding: max(8px, env(safe-area-inset-top)) 12px 5px;
   z-index: 4;
 }
-.top-rail > .status-cluster { margin-inline: auto; }
+.top-left-actions { display: flex; align-items: center; gap: 2px; }
+.top-rail > .status-cluster { position: absolute; left: 50%; margin: 0; transform: translateX(-50%); }
+.top-rail > .reset-view-action { margin-left: auto; }
 .back-action,
 .reset-view-action { width: 42px; height: 42px; border: 0; border-radius: 50%; color: var(--muted); background: transparent; cursor: pointer; font-size: 26px; }
 .back-action:hover,
@@ -334,24 +337,25 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .minimal-control-rail {
   position: absolute;
-  left: 50%;
+  left: max(7px, env(safe-area-inset-left));
+  right: 70px;
   bottom: max(7px, env(safe-area-inset-bottom));
-  width: min(calc(100% - 12px), 560px);
+  width: auto;
+  max-width: 500px;
   min-height: 60px;
+  margin-inline: auto;
   padding: 5px 6px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px 50px;
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
   gap: 4px;
   z-index: 8;
-  transform: translateX(-50%);
   background: linear-gradient(to top, var(--paper) 70%, transparent);
 }
 .minimal-control-rail > .symbol-palette { justify-self: center; width: 100%; min-width: 0; max-width: 100%; padding: 4px; overflow-x: auto; }
 .minimal-control-rail > .symbol-palette button { flex-basis: 45px; min-width: 45px; min-height: 45px; }
 .minimal-control-rail .icon-action { min-width: 45px; min-height: 45px; font-size: 20px; }
 .minimal-control-rail .icon-action:disabled { pointer-events: none; }
-.minimal-control-rail .submit-action { width: 46px; height: 46px; min-width: 46px; min-height: 46px; }
 .phase-selector { position: relative; min-width: 0; width: 100%; }
 .phase-selector-trigger { width: 100%; min-width: 0; min-height: 48px; padding: 4px 10px; display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--hairline); border-radius: 16px; color: var(--ink); background: rgb(34 39 45 / 94%); box-shadow: 0 10px 28px rgb(0 0 0 / 26%); cursor: pointer; }
 .selected-phase-symbol { color: var(--phase-color, var(--ink)); font-family: "STIX Two Math", "Cambria Math", serif; font-size: 24px; }
@@ -382,6 +386,10 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .clear-all-action { width: 45px; height: 45px; display: grid; place-items: center; border: 1px solid var(--hairline); border-radius: 50%; color: var(--muted); background: var(--surface); cursor: pointer; }
 .clear-all-action:disabled { opacity: .35; cursor: default; }
 .clear-all-action svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.top-left-actions .clear-all-action,
+.top-left-actions .erase-action { width: 42px; height: 42px; border: 0; background: transparent; }
+.top-left-actions .clear-all-action:hover:not(:disabled),
+.top-left-actions .erase-action:hover { color: var(--ink); background: var(--raised); }
 .review-control-rail { position: absolute; left: 50%; bottom: max(8px, env(safe-area-inset-bottom)); z-index: 8; min-height: 52px; width: min(calc(100% - 24px), 360px); padding: 6px; display: grid; grid-template-columns: minmax(0, 1fr) 72px 72px; align-items: center; gap: 6px; transform: translateX(-50%); border: 1px solid var(--hairline); border-radius: 17px; background: rgb(34 39 45 / 94%); box-shadow: 0 12px 30px rgb(0 0 0 / 30%); backdrop-filter: blur(14px); }
 .review-control-rail span { padding-left: 10px; overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .review-control-rail button { min-height: 40px; border: 1px solid var(--hairline); border-radius: 11px; color: var(--ink); background: transparent; cursor: pointer; }
@@ -404,6 +412,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   box-shadow: 0 8px 24px rgb(86 212 210 / 20%);
 }
 .submit-action:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgb(86 212 210 / 30%); }
+.submit-corner-action { position: absolute; right: max(10px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); z-index: 9; }
 .mode-control { position: relative; display: grid; place-items: center; }
 .mode-trigger { border: 1px solid var(--hairline); background: var(--surface); padding: 0 15px; display: flex; gap: 9px; min-width: 114px; }
 .mode-trigger:hover { border-color: #555e67; background: var(--raised); }
@@ -787,13 +796,17 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 
 @media (max-width: 420px) {
   .top-rail { gap: 5px; padding-inline: 7px; }
+  .top-left-actions { gap: 0; }
+  .top-left-actions .back-action,
+  .top-left-actions .clear-all-action,
+  .top-left-actions .erase-action { width: 38px; height: 38px; }
   .instruction-strip { gap: 5px; }
   .instruction-list { column-gap: 8px; font-size: 9px; line-height: 1.3; }
   .instruction-toggle { min-width: 34px; min-height: 34px; }
   .status-cluster { gap: 5px; }
   .status-cluster time { font-size: 10px; }
   .board-region { padding-inline: 2px; }
-  .minimal-control-rail { grid-template-columns: 44px minmax(0, 1fr) 44px 46px; gap: 4px; }
+  .minimal-control-rail { grid-template-columns: 44px minmax(0, 1fr); gap: 4px; }
   .minimal-control-rail .icon-action { width: 44px; min-width: 44px; }
   .minimal-control-rail > .symbol-palette button { flex-basis: 44px; min-width: 44px; }
   .foundation-grid, .processing-rules > div { grid-template-columns: 1fr; }

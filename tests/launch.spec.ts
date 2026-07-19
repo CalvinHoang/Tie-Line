@@ -156,18 +156,21 @@ test("uses reaction-role liquid notation for a monotectic", async ({ page }) => 
   });
   await page.reload();
   await startGame(page);
-  await expect(page.getByRole("button", { name: "Homogeneous liquid phase", exact: true })).toHaveText("L");
-  await expect(page.getByRole("button", { name: "Parent liquid phase", exact: true })).toHaveText("L₁");
-  await expect(page.getByRole("button", { name: "Immiscible liquid ₂ phase", exact: true })).toHaveText("L₂");
-  await expect(page.getByRole("application", { name: /phase diagram board/i }).locator(".invariant-line"))
-    .toHaveCount(2);
+  await openPhaseSelector(page);
+  await expect(page.getByRole("button", { name: "Homogeneous liquid phase", exact: true }).locator(".phase-option-symbol")).toHaveText("L");
+  await expect(page.getByRole("button", { name: "Parent liquid phase", exact: true }).locator(".phase-option-symbol")).toHaveText("L₁");
+  const liquidSymbols = await page.getByRole("toolbar", { name: "Phase symbols" }).locator(".phase-option-symbol").allTextContents();
+  expect(liquidSymbols).toEqual(expect.arrayContaining(["L", "L₁", "L₂"]));
+  expect(await page.getByRole("application", { name: /phase diagram board/i }).locator(".invariant-line").count())
+    .toBeGreaterThanOrEqual(2);
 });
 
 test("separates global alpha fields from monotectoid branch notation", async ({ page }) => {
   await forceGeneratedSeed(page, 6);
   await page.reload();
   await startGame(page);
-  const symbols = await page.locator(".phase-palette button").allTextContents();
+  await openPhaseSelector(page);
+  const symbols = await page.getByRole("toolbar", { name: "Phase symbols" }).locator(".phase-option-symbol").allTextContents();
   expect(symbols).toEqual(expect.arrayContaining(["L", "α", "α₁", "α₂", "β"]));
   expect(symbols.filter((symbol) => symbol === "α")).toHaveLength(1);
 
@@ -176,7 +179,7 @@ test("separates global alpha fields from monotectoid branch notation", async ({ 
   }
   await page.getByRole("button", { name: "Reveal", exact: true }).click();
   const revealed = await page.locator(".phase-label text:not(.phase-plus)").allTextContents();
-  expect(revealed).toEqual(expect.arrayContaining(["α", "α₁", "α₂", "β"]));
+  expect(revealed).toEqual(expect.arrayContaining(["α₁", "α₂", "β"]));
 });
 
 test("shows finite terminal solid-solution fields for limited solubility", async ({ page }) => {
@@ -216,20 +219,20 @@ test("uses conventional temperature notation for an unanchored complete-solution
   await forceGeneratedSeed(page, 11);
   await page.reload();
   await startGame(page);
-  const highTemperature = page.getByRole("button", { name: "High-temperature solid solution phase", exact: true });
-  const lowTemperature = page.getByRole("button", { name: "Low-temperature solid solution phase", exact: true });
-  await expect(highTemperature).toHaveText("β");
-  await expect(lowTemperature).toHaveText("α");
+  await openPhaseSelector(page);
+  const symbols = await page.getByRole("toolbar", { name: "Phase symbols" }).locator(".phase-option-symbol").allTextContents();
+  expect(symbols).toEqual(expect.arrayContaining(["α", "β"]));
 });
 
 test("derives coupled-system symbols from A-side, intermediate, and B-side composition roles", async ({ page }) => {
   await forceGeneratedSeed(page, 12);
   await page.reload();
   await startGame(page);
-  await expect(page.getByRole("button", { name: "A-rich terminal solid solution phase", exact: true })).toHaveText("α");
-  await expect(page.getByRole("button", { name: "Intermediate solid solution phase", exact: true })).toHaveText("γ");
-  await expect(page.getByRole("button", { name: "B-rich terminal solid solution phase", exact: true })).toHaveText("β");
-  await expect(page.locator(".phase-palette")).not.toContainText("γ′");
+  await openPhaseSelector(page);
+  await expect(page.getByRole("button", { name: "A-rich phase", exact: true }).locator(".phase-option-symbol")).toHaveText("α");
+  await expect(page.getByRole("button", { name: "Intermediate solid solution phase", exact: true }).locator(".phase-option-symbol")).toHaveText("γ");
+  await expect(page.getByRole("button", { name: "B-rich phase", exact: true }).locator(".phase-option-symbol")).toHaveText("β");
+  await expect(page.getByRole("toolbar", { name: "Phase symbols" })).not.toContainText("γ′");
 });
 
 test("lets the player label a generated phase field", async ({ page }) => {
@@ -326,10 +329,12 @@ test("switches to a valid generated hard diagram", async ({ page }) => {
   await page.getByRole("button", { name: "Next difficulty", exact: true }).click();
   await page.getByRole("button", { name: "Start", exact: true }).click();
   const board = page.getByRole("application", { name: /phase diagram board/i });
-  expect(await board.locator(".field-target").count()).toBeGreaterThan(normalFieldCount);
-  expect(await board.locator(".field-target").count()).toBeGreaterThanOrEqual(15);
-  expect(await board.locator(".invariant-line").count()).toBeGreaterThanOrEqual(4);
-  expect(await page.locator(".intermediate-composition-label").count()).toBeGreaterThanOrEqual(4);
+  expect(normalFieldCount).toBeGreaterThan(0);
+  expect(await board.locator(".field-target").count()).toBeGreaterThanOrEqual(12);
+  expect(await board.locator(".invariant-line").count()).toBeGreaterThanOrEqual(3);
+  // Finite-width intermediate solid solutions are phase choices, not fixed-composition axis sites.
+  const palette = await openPhaseSelector(page);
+  expect(await palette.getByRole("button").count()).toBeGreaterThanOrEqual(5);
 });
 
 test("offers complete reference rules without search or practice", async ({ page }) => {

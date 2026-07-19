@@ -2,7 +2,7 @@ import { extractFaces } from "../canvas/face-extraction";
 import { applyDiagramNotation } from "./diagram-notation";
 import { pointInPolygon, polygonArea, sameLogicalPoint } from "./geometry";
 import { assertPhaseEquilibria, auditPhaseEquilibria } from "./phase-equilibria-validator";
-import { adaptPhaseIdentities } from "./phase-identity-adapter";
+import { adaptPhaseIdentities, inferPhaseIdentityInputs } from "./phase-identity-adapter";
 import { boundaryKindForRole, REACTION_RULES } from "./phase-rules";
 import { auditRoundThermodynamicRealizability } from "./round-thermodynamic-audit";
 import { assemblePhaseTopology } from "./topology-assembler";
@@ -20,6 +20,29 @@ import type {
 } from "./schema";
 
 export type Difficulty = "easy" | "normal" | "hard";
+
+export type IntermediateThermalMode = "congruent" | "incongruent" | "eutectoid" | "peritectoid";
+
+export interface IntermediateScenario {
+  thermalMode: IntermediateThermalMode;
+  partialSolubility: boolean;
+}
+
+/**
+ * Balanced eight-slot thermal schedule (4/2/1/1) plus an independent ten-slot
+ * solubility schedule (3/7). The multiplication by three permutes the thermal
+ * slots without changing their exact long-run percentages.
+ */
+export function intermediateScenario(seed: number, compoundIndex: number): IntermediateScenario {
+  const normalizedSeed = seed >>> 0;
+  const thermalSlot = (normalizedSeed + compoundIndex * 3) % 8;
+  const thermalMode: IntermediateThermalMode = thermalSlot < 4 ? "congruent"
+    : thermalSlot < 6 ? "incongruent"
+      : thermalSlot === 6 ? "eutectoid"
+        : "peritectoid";
+  const solubilitySlot = (Math.floor(normalizedSeed / 8) * 7 + compoundIndex * 3 + 1) % 10;
+  return { thermalMode, partialSolubility: solubilitySlot < 3 };
+}
 
 export type DiagramFamily =
   | "simple-eutectic"
@@ -1584,11 +1607,13 @@ interface ComposedSegment {
 
 interface ComposedSolidModule {
   segmentIndex: number;
-  reactionType: "eutectoid" | "peritectoid" | "monotectoid";
+  reactionType: "eutectoid" | "peritectoid";
   parentPhaseId: string;
   parentX: number;
   temperature: number;
   verticalCurveId?: string;
+  partialSolubility: boolean;
+  fieldCurveIds?: [string, string];
 }
 
 const COMPOSED_SOLID_IDS = ["gamma", "delta", "epsilon", "zeta", "eta", "theta", "kappa", "lambda", "mu", "nu", "xi", "omicron"] as const;
@@ -1702,27 +1727,55 @@ function expandReactionKernel(
   });
 
   const segments: ComposedSegment[] = [];
-  const boundaryPhases: Array<{ x: number; phaseId: string; groupId: string; peakRoleId: string }> = [];
+  const boundaryPhases: Array<{
+    x: number;
+    phaseId: string;
+    groupId: string;
+    peakRoleId?: string;
+    thermalMode: "congruent" | "incongruent";
+    partialSolubility: boolean;
+    halfWidth: number;
+    leftEndpointRole?: string;
+    rightEndpointRole?: string;
+    fieldCurveIds?: [string, string];
+  }> = [];
   if (appendedSegmentCount > 0) {
     const rightEdgePoints = solution.points.filter((item) => Math.abs(item.point.compositionBPercent - seamX) < .001);
     const seamPeak = [...rightEdgePoints].sort((a, b) => b.point.temperatureCelsius - a.point.temperatureCelsius)[0];
     if (!seamPeak) throw new Error(`${solution.puzzleId} cannot find the scaled kernel seam.`);
-    boundaryPhases.push({ x: seamX, phaseId: seamPhaseId, groupId: originalRightPhase.id, peakRoleId: seamPeak.roleId });
+    boundaryPhases.push({ x: seamX, phaseId: seamPhaseId, groupId: originalRightPhase.id, peakRoleId: seamPeak.roleId, thermalMode: "congruent", partialSolubility: false, halfWidth: 0 });
 
     for (let boundaryIndex = 1; boundaryIndex <= appendedSegmentCount; boundaryIndex += 1) {
       const finalBoundary = boundaryIndex === appendedSegmentCount;
       const x = seamX + boundaryIndex / appendedSegmentCount * (100 - seamX);
       const phaseId = finalBoundary ? rightTerminalPhaseId : takeSolidId();
       const groupId = finalBoundary ? "right-terminal" : phaseId;
-      const peakRoleId = finalBoundary ? "b-melt-composed" : `${groupId}-peak-composed`;
-      const peakT = integer(random, 900, 1050, 10);
-      solution.points.push({ roleId: peakRoleId, point: point(x, peakT) });
-      boundaryPhases.push({ x, phaseId, groupId, peakRoleId });
+      const rolledMode = intermediateScenario(seed, boundaryIndex).thermalMode;
+      const partialSolubility = !finalBoundary && intermediateScenario(seed, boundaryIndex).partialSolubility;
+      const thermalMode: "congruent" | "incongruent" = !finalBoundary
+        && rolledMode === "incongruent"
+        && boundaryPhases.at(-1)?.thermalMode !== "incongruent"
+        ? "incongruent"
+        : "congruent";
+      const peakRoleId = thermalMode === "congruent" ? (finalBoundary ? "b-melt-composed" : `${groupId}-peak-composed`) : undefined;
+      if (peakRoleId) solution.points.push({ roleId: peakRoleId, point: point(x, integer(random, 900, 1050, 10)) });
+      const halfWidth = partialSolubility ? Math.min(3.5, (100 - seamX) / appendedSegmentCount * .14) : 0;
+      boundaryPhases.push({ x, phaseId, groupId, peakRoleId, thermalMode, partialSolubility, halfWidth });
       if (finalBoundary) inventory.push({ id: phaseId, symbol: "β", name: "Beta", kind: "terminal-solid", required: true });
-      else inventory.push({ id: phaseId, symbol: "γ", name: "Composed intermediate", kind: "line-compound", required: true, compositionGroupId: groupId });
+      else inventory.push({
+        id: phaseId,
+        symbol: "γ",
+        name: `${thermalMode === "incongruent" ? "Incongruently" : "Congruently"} melting intermediate`,
+        kind: partialSolubility ? "intermediate-solid-solution" : "line-compound",
+        required: true,
+        compositionGroupId: partialSolubility ? undefined : groupId,
+        compositionRole: "intermediate",
+        intermediateThermalMode: thermalMode,
+        partialSolubility,
+      });
     }
 
-    for (let segmentIndex = 0; segmentIndex < appendedSegmentCount; segmentIndex += 1) {
+    for (let segmentIndex = 0; segmentIndex < appendedSegmentCount;) {
       const left = boundaryPhases[segmentIndex]; const right = boundaryPhases[segmentIndex + 1];
       let eutecticT = integer(random, 340, 510, 10);
       const occupiedLeftTemperatures = new Set(solution.points.filter((item) => Math.abs(item.point.compositionBPercent - left.x) < .001)
@@ -1733,29 +1786,61 @@ function expandReactionKernel(
       const eutecticRole = `composed-eutectic-${segmentIndex}`;
       const rightRole = `${right.groupId}-eutectic-left-${segmentIndex}`;
       solution.points.push(
-        { roleId: leftRole, point: point(left.x, eutecticT) },
+        { roleId: leftRole, point: point(left.x + left.halfWidth, eutecticT) },
         { roleId: eutecticRole, point: point(eutecticX, eutecticT) },
-        { roleId: rightRole, point: point(right.x, eutecticT) },
+        { roleId: rightRole, point: point(right.x - right.halfWidth, eutecticT) },
       );
-      solution.curves.push(
-        { type: "curve", startRoleId: left.peakRoleId, endRoleId: eutecticRole, recommendedControl: bowedControl(point(eutecticX, eutecticT), point(left.x, solution.points.find((item) => item.roleId === left.peakRoleId)!.point.temperatureCelsius)), semanticRole: `composed-liquidus-left-${segmentIndex}` },
-        { type: "curve", startRoleId: right.peakRoleId, endRoleId: eutecticRole, recommendedControl: bowedControl(point(eutecticX, eutecticT), point(right.x, solution.points.find((item) => item.roleId === right.peakRoleId)!.point.temperatureCelsius)), semanticRole: `composed-liquidus-right-${segmentIndex}` },
-      );
+      left.rightEndpointRole = leftRole;
+      right.leftEndpointRole = rightRole;
+      if (!left.peakRoleId) throw new Error(`${solution.puzzleId} placed adjacent incongruent fillers.`);
+      solution.curves.push({ type: "curve", startRoleId: left.peakRoleId, endRoleId: eutecticRole, recommendedControl: bowedControl(point(eutecticX, eutecticT), point(left.x, solution.points.find((item) => item.roleId === left.peakRoleId)!.point.temperatureCelsius)), semanticRole: `composed-liquidus-left-${segmentIndex}` });
       solution.invariants.push({
         type: "invariant-horizontal", startRoleId: leftRole, endRoleId: rightRole, interiorRoleIds: [eutecticRole],
         temperatureCelsius: eutecticT, expectedAssemblage: [topLiquidPhaseId, left.phaseId, right.phaseId], reactionType: "eutectic",
         incidence: { above: [[topLiquidPhaseId, left.phaseId], [topLiquidPhaseId, right.phaseId]], below: [[left.phaseId, right.phaseId]] },
       });
       segments.push({ index: segmentIndex, leftX: left.x, rightX: right.x, leftPhaseId: left.phaseId, rightPhaseId: right.phaseId, eutecticX, eutecticT });
+
+      if (right.thermalMode === "incongruent") {
+        const anchor = boundaryPhases[segmentIndex + 2];
+        if (!anchor?.peakRoleId) throw new Error(`${solution.puzzleId} cannot terminate an incongruent filler without a congruent right-hand phase.`);
+        const peritecticT = eutecticT + integer(random, 140, 230, 10);
+        const liquidX = eutecticX + (right.x - eutecticX) * .62;
+        const liquidRole = `composed-peritectic-liquid-${segmentIndex}`;
+        const productRole = `${right.groupId}-peritectic-${segmentIndex}`;
+        const anchorRole = `${anchor.groupId}-peritectic-left-${segmentIndex}`;
+        solution.points.push(
+          { roleId: liquidRole, point: point(liquidX, peritecticT) },
+          { roleId: productRole, point: point(right.x + right.halfWidth, peritecticT) },
+          { roleId: anchorRole, point: point(anchor.x - anchor.halfWidth, peritecticT) },
+        );
+        right.rightEndpointRole = productRole;
+        anchor.leftEndpointRole = anchorRole;
+        solution.curves.push(
+          { type: "curve", startRoleId: eutecticRole, endRoleId: liquidRole, recommendedControl: bowedControl(point(eutecticX, eutecticT), point(liquidX, peritecticT), .72), semanticRole: `composed-liquidus-incongruent-${segmentIndex}` },
+          { type: "curve", startRoleId: liquidRole, endRoleId: anchor.peakRoleId, recommendedControl: bowedControl(point(liquidX, peritecticT), solution.points.find((item) => item.roleId === anchor.peakRoleId)!.point), semanticRole: `composed-liquidus-anchor-${segmentIndex}` },
+        );
+        solution.invariants.push({
+          type: "invariant-horizontal", startRoleId: liquidRole, endRoleId: anchorRole, interiorRoleIds: [productRole],
+          temperatureCelsius: peritecticT, expectedAssemblage: [topLiquidPhaseId, right.phaseId, anchor.phaseId], reactionType: "peritectic",
+        });
+        segments.push({ index: segmentIndex + 1, leftX: right.x, rightX: anchor.x, leftPhaseId: right.phaseId, rightPhaseId: anchor.phaseId, eutecticX: liquidX, eutecticT: peritecticT });
+        segmentIndex += 2;
+      } else {
+        if (!right.peakRoleId) throw new Error(`${solution.puzzleId} has no right liquidus anchor.`);
+        solution.curves.push({ type: "curve", startRoleId: right.peakRoleId, endRoleId: eutecticRole, recommendedControl: bowedControl(point(eutecticX, eutecticT), point(right.x, solution.points.find((item) => item.roleId === right.peakRoleId)!.point.temperatureCelsius)), semanticRole: `composed-liquidus-right-${segmentIndex}` });
+        segmentIndex += 1;
+      }
     }
   }
 
   const solidModules: ComposedSolidModule[] = [];
   const requestedSolidModules = Math.min(appendedSegmentCount, solidModuleCount);
   const availableSegments = [...segments].sort(() => random() - .5).slice(0, requestedSolidModules);
-  const solidTypes: Array<ComposedSolidModule["reactionType"]> = ["eutectoid", "monotectoid"];
+  const solidTypes: Array<ComposedSolidModule["reactionType"]> = ["eutectoid", "peritectoid"];
   availableSegments.forEach((segment, moduleIndex) => {
     const reactionType = solidTypes[(seed + moduleIndex) % solidTypes.length];
+    const partialSolubility = intermediateScenario(seed, targetBackboneIntermediates + moduleIndex).partialSolubility;
     const parentPhaseId = takeSolidId();
     const parentX = (segment.leftX + segment.rightX) / 2;
     const temperature = Math.max(110, segment.eutecticT - integer(random, 150, 220, 10));
@@ -1769,11 +1854,22 @@ function expandReactionKernel(
       { roleId: rightRole, point: point(segment.rightX, temperature) },
     );
     let verticalCurveId: string | undefined;
+    let fieldCurveIds: [string, string] | undefined;
     if (reactionType === "peritectoid") {
       const lowRole = `${parentPhaseId}-low-${moduleIndex}`;
       solution.points.push({ roleId: lowRole, point: point(parentX, 0) });
-      verticalCurveId = `generated-curve:${solution.curves.length}`;
-      solution.curves.push({ type: "curve", startRoleId: lowRole, endRoleId: parentRole, recommendedControl: point(parentX, temperature / 2), semanticRole: `${parentPhaseId}-peritectoid-product-line`, boundaryKind: "line-compound", compositionSiteId: parentPhaseId });
+      if (partialSolubility) {
+        const halfWidth = Math.min(3.5, (segment.rightX - segment.leftX) * .16);
+        const firstId = `generated-curve:${solution.curves.length}`;
+        solution.curves.push(
+          { type: "curve", startRoleId: lowRole, endRoleId: parentRole, recommendedControl: point(parentX - halfWidth, temperature / 2), semanticRole: `${parentPhaseId}-peritectoid-solvus-left`, boundaryKind: "solvus" },
+          { type: "curve", startRoleId: lowRole, endRoleId: parentRole, recommendedControl: point(parentX + halfWidth, temperature / 2), semanticRole: `${parentPhaseId}-peritectoid-solvus-right`, boundaryKind: "solvus" },
+        );
+        fieldCurveIds = [firstId, `generated-curve:${solution.curves.length - 1}`];
+      } else {
+        verticalCurveId = `generated-curve:${solution.curves.length}`;
+        solution.curves.push({ type: "curve", startRoleId: lowRole, endRoleId: parentRole, recommendedControl: point(parentX, temperature / 2), semanticRole: `${parentPhaseId}-peritectoid-product-line`, boundaryKind: "line-compound", compositionSiteId: parentPhaseId });
+      }
     } else {
       const apexRole = `${parentPhaseId}-apex-${moduleIndex}`;
       solution.points.push({ roleId: apexRole, point: point(parentX, apexT) });
@@ -1781,8 +1877,18 @@ function expandReactionKernel(
         { type: "curve", startRoleId: leftRole, endRoleId: apexRole, recommendedControl: point(parentX - (segment.rightX - segment.leftX) * .18, apexT - 12), semanticRole: `${reactionType}-left-boundary-${moduleIndex}` },
         { type: "curve", startRoleId: apexRole, endRoleId: rightRole, recommendedControl: point(parentX + (segment.rightX - segment.leftX) * .18, apexT - 12), semanticRole: `${reactionType}-right-boundary-${moduleIndex}` },
       );
-      verticalCurveId = `generated-curve:${solution.curves.length}`;
-      solution.curves.push({ type: "curve", startRoleId: parentRole, endRoleId: apexRole, recommendedControl: point(parentX, (temperature + apexT) / 2), semanticRole: `${parentPhaseId}-${reactionType}-parent-line`, boundaryKind: "line-compound", compositionSiteId: parentPhaseId });
+      if (partialSolubility) {
+        const halfWidth = Math.min(3.5, (segment.rightX - segment.leftX) * .16);
+        const firstId = `generated-curve:${solution.curves.length}`;
+        solution.curves.push(
+          { type: "curve", startRoleId: parentRole, endRoleId: apexRole, recommendedControl: point(parentX - halfWidth, (temperature + apexT) / 2), semanticRole: `${parentPhaseId}-${reactionType}-solvus-left`, boundaryKind: "solvus" },
+          { type: "curve", startRoleId: parentRole, endRoleId: apexRole, recommendedControl: point(parentX + halfWidth, (temperature + apexT) / 2), semanticRole: `${parentPhaseId}-${reactionType}-solvus-right`, boundaryKind: "solvus" },
+        );
+        fieldCurveIds = [firstId, `generated-curve:${solution.curves.length - 1}`];
+      } else {
+        verticalCurveId = `generated-curve:${solution.curves.length}`;
+        solution.curves.push({ type: "curve", startRoleId: parentRole, endRoleId: apexRole, recommendedControl: point(parentX, (temperature + apexT) / 2), semanticRole: `${parentPhaseId}-${reactionType}-parent-line`, boundaryKind: "line-compound", compositionSiteId: parentPhaseId });
+      }
     }
     const decomposition = reactionType !== "peritectoid";
     solution.invariants.push({
@@ -1792,11 +1898,58 @@ function expandReactionKernel(
         ? { above: [[segment.leftPhaseId, parentPhaseId], [parentPhaseId, segment.rightPhaseId]], below: [[segment.leftPhaseId, segment.rightPhaseId]] }
         : { above: [[segment.leftPhaseId, segment.rightPhaseId]], below: [[segment.leftPhaseId, parentPhaseId], [parentPhaseId, segment.rightPhaseId]] },
     });
-    inventory.push({ id: parentPhaseId, symbol: "γ", name: `${reactionType} intermediate`, kind: "line-compound", required: true, compositionGroupId: parentPhaseId });
-    solidModules.push({ segmentIndex: segment.index, reactionType, parentPhaseId, parentX, temperature, verticalCurveId });
+    inventory.push({
+      id: parentPhaseId,
+      symbol: "γ",
+      name: `${reactionType} intermediate${partialSolubility ? " solid solution" : ""}`,
+      kind: partialSolubility ? "intermediate-solid-solution" : "line-compound",
+      required: true,
+      compositionGroupId: partialSolubility ? undefined : parentPhaseId,
+      compositionRole: "intermediate",
+      intermediateThermalMode: reactionType,
+      partialSolubility,
+    });
+    solidModules.push({ segmentIndex: segment.index, reactionType, parentPhaseId, parentX, temperature, verticalCurveId, partialSolubility, fieldCurveIds });
   });
 
-  boundaryPhases.slice(0, -1).forEach((boundary) => {
+  boundaryPhases.filter((boundary) => boundary.partialSolubility).forEach((boundary) => {
+    if (!boundary.leftEndpointRole || !boundary.rightEndpointRole) {
+      throw new Error(`${solution.puzzleId} cannot bound partial-solubility phase ${boundary.phaseId}.`);
+    }
+    const leftEndpoint = solution.points.find((item) => item.roleId === boundary.leftEndpointRole)!.point;
+    const rightEndpoint = solution.points.find((item) => item.roleId === boundary.rightEndpointRole)!.point;
+    const leftLowRole = `${boundary.groupId}-partial-low-left`;
+    const rightLowRole = `${boundary.groupId}-partial-low-right`;
+    solution.points.push(
+      { roleId: leftLowRole, point: point(boundary.x - boundary.halfWidth, 0) },
+      { roleId: rightLowRole, point: point(boundary.x + boundary.halfWidth, 0) },
+    );
+    if (boundary.thermalMode === "congruent") {
+      if (!boundary.peakRoleId) throw new Error(`${solution.puzzleId} has no congruent peak for ${boundary.phaseId}.`);
+      const peak = solution.points.find((item) => item.roleId === boundary.peakRoleId)!.point;
+      solution.curves.push(
+        { type: "curve", startRoleId: boundary.peakRoleId, endRoleId: boundary.leftEndpointRole, recommendedControl: bowedControl(leftEndpoint, peak, .72), semanticRole: `${boundary.groupId}-solidus-left`, boundaryKind: "solidus" },
+        { type: "curve", startRoleId: boundary.peakRoleId, endRoleId: boundary.rightEndpointRole, recommendedControl: bowedControl(rightEndpoint, peak, .72), semanticRole: `${boundary.groupId}-solidus-right`, boundaryKind: "solidus" },
+      );
+    } else {
+      solution.curves.push({
+        type: "curve",
+        startRoleId: boundary.leftEndpointRole,
+        endRoleId: boundary.rightEndpointRole,
+        recommendedControl: point(boundary.x, (leftEndpoint.temperatureCelsius + rightEndpoint.temperatureCelsius) / 2),
+        semanticRole: `${boundary.groupId}-incongruent-solidus`,
+        boundaryKind: "solidus",
+      });
+    }
+    const firstSolvusId = `generated-curve:${solution.curves.length}`;
+    solution.curves.push(
+      { type: "curve", startRoleId: leftLowRole, endRoleId: boundary.leftEndpointRole, recommendedControl: point(boundary.x - boundary.halfWidth * .7, leftEndpoint.temperatureCelsius * .5), semanticRole: `${boundary.groupId}-solvus-left`, boundaryKind: "solvus" },
+      { type: "curve", startRoleId: boundary.rightEndpointRole, endRoleId: rightLowRole, recommendedControl: point(boundary.x + boundary.halfWidth * .7, rightEndpoint.temperatureCelsius * .5), semanticRole: `${boundary.groupId}-solvus-right`, boundaryKind: "solvus" },
+    );
+    boundary.fieldCurveIds = [firstSolvusId, `generated-curve:${solution.curves.length - 1}`];
+  });
+
+  boundaryPhases.slice(0, -1).filter((boundary) => !boundary.partialSolubility).forEach((boundary) => {
     const bottomRole = `${boundary.groupId}-composed-bottom`;
     if (!solution.points.some((item) => Math.abs(item.point.compositionBPercent - boundary.x) < .001 && item.point.temperatureCelsius === 0)) {
       solution.points.push({ roleId: bottomRole, point: point(boundary.x, 0) });
@@ -1828,15 +1981,28 @@ function expandReactionKernel(
       if (!region?.field) throw new Error(`${solution.puzzleId} cannot map a kernel field at ${local.compositionBPercent}, ${local.temperatureCelsius}.`);
       return { role: `kernel-${region.field.role}`, phases: remapAssemblage(region.field.expectedAssemblage), texture: region.field.texture };
     }
+    const partialBoundary = boundaryPhases.find((boundary) => boundary.fieldCurveIds?.every((curveId) => boundaries.has(curveId)));
+    if (partialBoundary) return {
+      role: `${partialBoundary.groupId}-partial-solid-solution`,
+      phases: [partialBoundary.phaseId],
+      texture: "partial-solubility",
+    };
     const segment = segments.find((candidate) => label.compositionBPercent >= candidate.leftX - .001 && label.compositionBPercent <= candidate.rightX + .001) ?? segments.at(-1)!;
     if (label.temperatureCelsius > segment.eutecticT) return label.compositionBPercent < segment.eutecticX
       ? { role: `segment-${segment.index}-liquid-left`, phases: [topLiquidPhaseId, segment.leftPhaseId] }
       : { role: `segment-${segment.index}-liquid-right`, phases: [topLiquidPhaseId, segment.rightPhaseId] };
     const module = solidModules.find((candidate) => candidate.segmentIndex === segment.index);
+    if (module?.fieldCurveIds?.every((curveId) => boundaries.has(curveId))) return {
+      role: `segment-${segment.index}-${module.parentPhaseId}`,
+      phases: [module.parentPhaseId],
+      texture: "partial-solubility",
+    };
     if (module?.reactionType === "peritectoid" && label.temperatureCelsius < module.temperature) return label.compositionBPercent < module.parentX
       ? { role: `segment-${segment.index}-left-product`, phases: [segment.leftPhaseId, module.parentPhaseId] }
       : { role: `segment-${segment.index}-right-product`, phases: [module.parentPhaseId, segment.rightPhaseId] };
-    if (module && module.reactionType !== "peritectoid" && module.verticalCurveId && boundaries.has(module.verticalCurveId)) return label.compositionBPercent < module.parentX
+    if (module && module.reactionType !== "peritectoid"
+      && ((module.verticalCurveId && boundaries.has(module.verticalCurveId))
+        || module.fieldCurveIds?.some((curveId) => boundaries.has(curveId)))) return label.compositionBPercent < module.parentX
       ? { role: `segment-${segment.index}-left-parent`, phases: [segment.leftPhaseId, module.parentPhaseId] }
       : { role: `segment-${segment.index}-parent-right`, phases: [module.parentPhaseId, segment.rightPhaseId] };
     return { role: `segment-${segment.index}-solid-pair`, phases: [segment.leftPhaseId, segment.rightPhaseId] };
@@ -1878,7 +2044,18 @@ function generateRuleComposedRound(seed: number, difficulty: "normal" | "hard"):
   for (let solidModuleCount = desiredSolidModules; solidModuleCount >= 0; solidModuleCount -= 1) {
     const candidate = expandReactionKernel(kernel, seed, difficulty, targetIntermediates, solidModuleCount);
     const adapted = applyDiagramNotation(candidate.puzzle, candidate.solution);
-    const normalizedCandidate = { ...candidate, puzzle: adapted.puzzle, solution: adapted.solution };
+    const inferred = inferPhaseIdentityInputs(adapted.puzzle, adapted.solution).inferredFacts;
+    const phaseKindById = new Map(adapted.puzzle.phases.map((phase) => [phase.id, phase.kind]));
+    const terminalNameById = new Map(inferred.flatMap((fact) => fact.touchesA !== fact.touchesB
+      && phaseKindById.get(fact.sourceKey) !== "liquid"
+      ? [[fact.sourceKey, fact.touchesA ? "A-rich" : "B-rich"] as const]
+      : []));
+    const namedPuzzle: PuzzleDefinition = {
+      ...adapted.puzzle,
+      phases: adapted.puzzle.phases.map((phase) => ({ ...phase, name: terminalNameById.get(phase.id) ?? phase.name })),
+      diagramLabels: adapted.puzzle.diagramLabels.map((label) => ({ ...label, name: terminalNameById.get(label.colorPhaseId) ?? label.name })),
+    };
+    const normalizedCandidate = { ...candidate, puzzle: namedPuzzle, solution: adapted.solution };
     const audit = auditPhaseEquilibria(normalizedCandidate.puzzle, normalizedCandidate.solution);
     if (audit.valid) return { ...normalizedCandidate, featuredFeature };
     lastViolations = audit.violations.map((violation) => `${violation.ruleId}[${violation.elementIds.join("|")}]: ${violation.message}`).join(", ");
@@ -1968,7 +2145,8 @@ function assertFeaturedFeatureVisibility(round: GeneratedRound): void {
       return start && end ? Math.abs(end.compositionBPercent - start.compositionBPercent) : 0;
     });
   const terminalSolutionFields = round.solution.expectedFields.filter((field) =>
-    field.texture === "partial-solubility" && field.expectedAssemblage.length === 1,
+    field.texture === "partial-solubility" && field.expectedAssemblage.length === 1
+      && !round.puzzle.phases.find((phase) => phase.id === field.expectedAssemblage[0])?.intermediateThermalMode,
   );
   if (solvusSpans.length !== 2 || solvusSpans.some((span) => span < 6) || terminalSolutionFields.length !== 2) {
     throw new Error(`${round.solution.puzzleId} does not give both partial-solubility terminal fields enough visible composition width.`);

@@ -25,7 +25,13 @@ describe("Tie-Line launch", () => {
     await userEvent.click(screen.getByRole("button", { name: /Start/i }));
     await userEvent.click(screen.getByRole("button", { name: /start labelling/i }));
     expect(container.querySelector(".critical-options")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Clear all labels" })).toBeDisabled();
+    const topRail = container.querySelector<HTMLElement>(".top-rail")!;
+    const bottomRail = container.querySelector<HTMLElement>(".minimal-control-rail")!;
+    expect(within(topRail).getByRole("button", { name: "Clear all labels" })).toBeDisabled();
+    expect(within(topRail).getByRole("button", { name: "Erase labels" })).toBeInTheDocument();
+    expect(within(bottomRail).queryByRole("button", { name: "Clear all labels" })).not.toBeInTheDocument();
+    expect(within(bottomRail).queryByRole("button", { name: "Erase labels" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit labels" })).toHaveClass("submit-corner-action");
     const phaseChooser = screen.getByRole("button", { name: /Choose phase/i });
     expect(phaseChooser).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("toolbar", { name: "Phase symbols" })).not.toBeInTheDocument();

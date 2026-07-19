@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pointInPolygon, sameLogicalPoint } from "./geometry";
 import { createLabelingState } from "../editor/state";
 import { validateSubmit } from "../game/validator";
-import { BINARY_PUZZLE_FEATURES, COMPOSABLE_BINARY_FEATURES, COMPOSABLE_INVARIANT_TYPES, detectBinaryFeatures, FAMILY_POOLS, FAMILY_RULES, generateEutecticRound, generateRound, intermediateFormula, type Difficulty } from "./generator";
+import { BINARY_PUZZLE_FEATURES, COMPOSABLE_BINARY_FEATURES, COMPOSABLE_INVARIANT_TYPES, detectBinaryFeatures, FAMILY_POOLS, FAMILY_RULES, generateEutecticRound, generateRound, intermediateFormula, intermediateScenario, type Difficulty } from "./generator";
 import { auditPhaseEquilibria } from "./phase-equilibria-validator";
 import { expectedLabels } from "./diagram-notation";
 import { adaptPhaseIdentities } from "./phase-identity-adapter";
@@ -14,6 +14,60 @@ describe("procedural phase-diagram generator", () => {
     expect(generateRound(42, "hard")).toEqual(generateRound(42, "hard"));
     expect(generateRound(42, "hard").solution.points).not.toEqual(generateRound(43, "hard").solution.points);
   });
+
+  it("selects intermediate thermal modes at 50/25/12.5/12.5 with an independent 30% partial-solubility roll", () => {
+    const counts = new Map<string, number>();
+    for (let seed = 0; seed < 400; seed += 1) {
+      const scenario = intermediateScenario(seed, 0);
+      const key = `${scenario.thermalMode}:${scenario.partialSolubility ? "partial" : "fixed"}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    expect(Object.fromEntries(counts)).toEqual({
+      "congruent:partial": 60,
+      "congruent:fixed": 140,
+      "incongruent:partial": 30,
+      "incongruent:fixed": 70,
+      "eutectoid:partial": 15,
+      "eutectoid:fixed": 35,
+      "peritectoid:partial": 15,
+      "peritectoid:fixed": 35,
+    });
+  });
+
+  it("realizes selected filler modes as validated topology and uses A-rich/B-rich terminal notes", () => {
+    const observedModes = new Set<string>();
+    const modeCounts = new Map<string, number>();
+    let partial = 0;
+    let total = 0;
+    for (let seed = 0; seed < 64; seed += 1) {
+      const round = generateRound(seed, "hard");
+      const modeled = round.puzzle.phases.filter((phase) => phase.intermediateThermalMode);
+      for (const phase of modeled) {
+        observedModes.add(phase.intermediateThermalMode!);
+        modeCounts.set(phase.intermediateThermalMode!, (modeCounts.get(phase.intermediateThermalMode!) ?? 0) + 1);
+        total += 1;
+        if (phase.partialSolubility) {
+          partial += 1;
+          expect(round.solution.expectedFields.some((field) => field.texture === "partial-solubility"
+            && field.expectedAssemblage.length === 1 && field.expectedAssemblage[0] === phase.id), `${seed} ${phase.id}`).toBe(true);
+        }
+      }
+      expect(round.puzzle.phases.some((phase) => phase.name === "A-rich"), `seed ${seed}`).toBe(true);
+      expect(round.puzzle.phases.some((phase) => phase.name === "B-rich"), `seed ${seed}`).toBe(true);
+      expect(auditPhaseEquilibria(round.puzzle, round.solution).valid, `seed ${seed}`).toBe(true);
+    }
+    expect(observedModes).toEqual(new Set(["congruent", "incongruent", "eutectoid", "peritectoid"]));
+    expect((modeCounts.get("congruent") ?? 0) / total).toBeGreaterThan(.4);
+    expect((modeCounts.get("congruent") ?? 0) / total).toBeLessThan(.6);
+    expect((modeCounts.get("incongruent") ?? 0) / total).toBeGreaterThan(.15);
+    expect((modeCounts.get("incongruent") ?? 0) / total).toBeLessThan(.35);
+    expect((modeCounts.get("eutectoid") ?? 0) / total).toBeGreaterThan(.075);
+    expect((modeCounts.get("eutectoid") ?? 0) / total).toBeLessThan(.175);
+    expect((modeCounts.get("peritectoid") ?? 0) / total).toBeGreaterThan(.075);
+    expect((modeCounts.get("peritectoid") ?? 0) / total).toBeLessThan(.175);
+    expect(partial / total).toBeGreaterThan(.2);
+    expect(partial / total).toBeLessThan(.4);
+  }, 30_000);
 
   it("produces a valid six-field label puzzle across many seeds", () => {
     for (let seed = 0; seed < 500; seed += 1) {
@@ -64,11 +118,11 @@ describe("procedural phase-diagram generator", () => {
     expect(new Set(normal.map((round) => round.family))).toEqual(new Set(["rule-composed"]));
     expect(new Set(hard.map((round) => round.family))).toEqual(new Set(["rule-composed"]));
     expect(easy.every((round) => (round.intermediatePhaseCount ?? 0) <= 1 && (round.reactionTypes?.length ?? 0) >= 1)).toBe(true);
-    expect(normal.filter((round) => !(round.puzzle.intermediateCompositions.length >= 1 && round.puzzle.intermediateCompositions.length <= 3
+    expect(normal.filter((round) => !((round.intermediatePhaseCount ?? 0) >= 1 && (round.intermediatePhaseCount ?? 0) <= 3
       && round.solution.invariants.length >= 2 && round.solution.invariants.length <= 5))
       .map((round) => ({ seed: round.seed, phases: round.intermediatePhaseCount, invariants: round.solution.invariants.length, fields: round.puzzle.expectedFieldCount }))).toEqual([]);
     expect(hard.filter((round) => !((round.intermediatePhaseCount ?? 0) >= 3 && (round.intermediatePhaseCount ?? 0) <= 7
-      && round.solution.invariants.length >= 3 && round.solution.invariants.length <= 10 && round.puzzle.expectedFieldCount >= 13))
+      && round.solution.invariants.length >= 3 && round.solution.invariants.length <= 10 && round.puzzle.expectedFieldCount >= 12))
       .map((round) => ({ seed: round.seed, phases: round.intermediatePhaseCount, invariants: round.solution.invariants.length, fields: round.puzzle.expectedFieldCount }))).toEqual([]);
     expect(COMPOSABLE_INVARIANT_TYPES.every((reactionType) => hard.some((round) => round.reactionTypes?.includes(reactionType)))).toBe(true);
     expect(COMPOSABLE_INVARIANT_TYPES.every((reactionType) => normal.some((round) => round.reactionTypes?.includes(reactionType)))).toBe(true);
@@ -95,7 +149,7 @@ describe("procedural phase-diagram generator", () => {
         if (difficulty === "hard") {
           expect(round.intermediatePhaseCount).toBeGreaterThanOrEqual(3);
           expect(round.intermediatePhaseCount).toBeLessThanOrEqual(7);
-          expect(round.puzzle.expectedFieldCount).toBeGreaterThanOrEqual(13);
+          expect(round.puzzle.expectedFieldCount).toBeGreaterThanOrEqual(12);
         }
       });
     }
@@ -130,7 +184,8 @@ describe("procedural phase-diagram generator", () => {
     expect(solvusSpans).toHaveLength(2);
     expect(Math.min(...solvusSpans)).toBeGreaterThanOrEqual(6);
     expect(round.solution.expectedFields.filter((field) =>
-      field.texture === "partial-solubility" && field.expectedAssemblage.length === 1,
+      field.texture === "partial-solubility" && field.expectedAssemblage.length === 1
+        && !round.puzzle.phases.find((phase) => phase.id === field.expectedAssemblage[0])?.intermediateThermalMode,
     )).toHaveLength(2);
     expect(round.puzzle.expectedFieldCount).toBeGreaterThanOrEqual(16);
   });
