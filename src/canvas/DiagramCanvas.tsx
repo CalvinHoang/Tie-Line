@@ -110,6 +110,10 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   const viewportFrame = useRef<number | undefined>(undefined);
   const wheelCommitTimer = useRef<number | undefined>(undefined);
   const viewportGestureChanged = useRef(false);
+  const fieldLabelPlacementCache = useRef(new Map<string, {
+    polygon: LogicalPoint[];
+    placement: ReturnType<typeof fieldLabelPlacement>;
+  }>());
   const [gesture, setGesture] = useState<Gesture>();
   const pointers = useRef(new Map<number, PointerPosition>());
   const pendingFieldTaps = useRef(new Map<number, PendingFieldTap>());
@@ -159,6 +163,31 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     if (viewportFrame.current !== undefined) window.cancelAnimationFrame(viewportFrame.current);
     if (wheelCommitTimer.current !== undefined) window.clearTimeout(wheelCommitTimer.current);
   }, []);
+
+  const cachedFieldLabelPlacement = (cell: ConstructionState["cells"][number], phaseCount: number) => {
+    const key = `${cell.id}:${phaseCount}`;
+    const cached = fieldLabelPlacementCache.current.get(key);
+    if (cached?.polygon === cell.polygon) return cached.placement;
+    const placement = fieldLabelPlacement(cell.polygon, phaseCount);
+    fieldLabelPlacementCache.current.set(key, { polygon: cell.polygon, placement });
+    return placement;
+  };
+
+  useEffect(() => {
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    const warmCache = () => state.cells.forEach((cell) => cachedFieldLabelPlacement(cell, 2));
+    let idleId: number | undefined;
+    let timerId: number | undefined;
+    idleId = idleWindow.requestIdleCallback?.(warmCache, { timeout: 500 });
+    if (idleId === undefined) timerId = window.setTimeout(warmCache, 0);
+    return () => {
+      if (idleId !== undefined) idleWindow.cancelIdleCallback?.(idleId);
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
+  }, [state.cells]);
 
   useEffect(() => {
     if (!targetFeedback) return;
@@ -416,7 +445,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
 
   const fieldLabelPlacements = useMemo(() => new Map(state.cells
     .filter((cell) => cell.phaseOrder.length > 0)
-    .map((cell) => [cell.id, fieldLabelPlacement(cell.polygon, Math.max(2, cell.phaseOrder.length))])), [state.cells]);
+    .map((cell) => [cell.id, cachedFieldLabelPlacement(cell, Math.max(2, cell.phaseOrder.length))])), [state.cells]);
 
   const fieldTextures = useMemo(() => new Map(state.cells.flatMap((cell) => {
     const expected = puzzle.expectedFields.find((field) => sameLogicalPoint(field.witnessPoint, cell.labelPoint));
