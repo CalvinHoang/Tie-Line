@@ -133,6 +133,12 @@ function auditInvariantReactions(
     const reaction = invariant.reactionType;
     if (reaction === "eutectic" && (liquidCount !== 1 || interiorCount !== 1)) {
       add(violations, "eutectic-archetype", "reaction", "A eutectic requires one liquid, two solids, and an interior liquid composition.", [id]);
+    } else if (reaction === "eutectoid" && (liquidCount !== 0 || interiorCount !== 1)) {
+      add(violations, "eutectoid-archetype", "reaction", "A eutectoid requires one parent solid between two solid products.", [id]);
+    } else if (reaction === "catatectic" && (liquidCount !== 1 || interiorCount !== 1)) {
+      add(violations, "catatectic-archetype", "reaction", "A catatectic requires one parent solid between a liquid and a second solid product.", [id]);
+    } else if (reaction === "monotectoid" && (liquidCount !== 0 || interiorCount !== 1)) {
+      add(violations, "monotectoid-archetype", "reaction", "A monotectoid requires one parent solid-solution composition between two solid products.", [id]);
     } else if (reaction === "peritectic" && (liquidCount !== 1 || interiorCount !== 1)) {
       add(violations, "peritectic-archetype", "reaction", "A peritectic requires one liquid, two solids, and three distinct reaction compositions.", [id]);
     } else if (reaction === "peritectoid" && (liquidCount !== 0 || interiorCount !== 1)) {
@@ -141,7 +147,7 @@ function auditInvariantReactions(
       add(violations, "syntectic-archetype", "reaction", "A syntectic requires two liquids and one solid at three distinct compositions.", [id]);
     } else if (reaction === "monotectic" && (liquidCount !== 2 || interiorCount !== 1)) {
       add(violations, "monotectic-archetype", "reaction", "A monotectic requires a parent liquid composition between a second liquid and a solid.", [id]);
-    } else if (!["eutectic", "peritectic", "peritectoid", "syntectic", "monotectic"].includes(reaction)) {
+    } else if (!["eutectic", "eutectoid", "catatectic", "monotectoid", "peritectic", "peritectoid", "syntectic", "monotectic"].includes(reaction)) {
       add(violations, "supported-reaction-archetype", "reaction", `Reaction type ${reaction} has no physically encoded archetype and cannot enter the playable pool.`, [id]);
     }
   });
@@ -284,6 +290,34 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
       add(violations, "field-phases-defined", "phase-model", `Field ${field.role} references an undefined phase.`);
     }
   });
+  solution.invariants.forEach((invariant, invariantIndex) => {
+    if (!invariant.incidence && invariant.reactionType !== "catatectic") return;
+    const adjacent = cells
+      .map((cell, cellIndex) => ({ cell, field: mappedFields[cellIndex] }))
+      .filter(({ cell, field }) => field && cell.boundary.some((edge) => edge.geometryId === `generated-horizontal:${invariantIndex}`));
+    const keys = (side: "above" | "below") => new Set(adjacent
+      .filter(({ cell }) => side === "above"
+        ? cell.labelPoint.temperatureCelsius > invariant.temperatureCelsius
+        : cell.labelPoint.temperatureCelsius < invariant.temperatureCelsius)
+      .map(({ field }) => [...field!.expectedAssemblage].sort().join("+")));
+    const above = keys("above");
+    const below = keys("below");
+    const assemblageKey = (phases: string[]) => [...phases].sort().join("+");
+    const [leftProduct, parent, rightProduct] = invariant.expectedAssemblage;
+    const expectedAbove = new Set((invariant.incidence?.above ?? [
+      [leftProduct, parent],
+      [parent, rightProduct],
+    ]).map(assemblageKey));
+    const expectedBelow = new Set((invariant.incidence?.below ?? [
+      [leftProduct, rightProduct],
+    ]).map(assemblageKey));
+    const matches = (actual: Set<string>, expected: Set<string>) => actual.size === expected.size
+      && [...actual].every((key) => expected.has(key));
+    if (!matches(above, expectedAbove) || !matches(below, expectedBelow)) {
+      const ruleId = invariant.reactionType === "catatectic" ? "catatectic-decomposition-incidence" : "invariant-local-incidence";
+      add(violations, ruleId, "reaction", `${invariant.reactionType} incidence is above [${[...above].join(" | ")}] / below [${[...below].join(" | ")}], expected above [${[...expectedAbove].join(" | ")}] / below [${[...expectedBelow].join(" | ")}].`, [`generated-horizontal:${invariantIndex}`]);
+    }
+  });
   const smallCells = cells.filter((cell) => Math.abs(polygonArea(cell.polygon)) < 35);
   if (smallCells.length > 0) add(violations, "finite-field-area", "geometry", "A phase field is degenerate or too small to represent a stable finite region.", smallCells.map((cell) => cell.id));
 
@@ -292,6 +326,12 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
   if (topCells.length !== 1 || !topField || topField.expectedAssemblage.length !== 1
     || phaseKind(topField.expectedAssemblage[0], phaseById) !== "liquid") {
     add(violations, "complete-diagram-liquid-top", "phase-rule", "A complete binary T-X diagram must have one connected homogeneous-liquid field across the high-temperature edge.");
+  } else {
+    const topPhaseId = topField.expectedAssemblage[0];
+    const topPhase = phaseById.get(topPhaseId);
+    if (topPhaseId !== "L" || topPhase?.symbol !== "L") {
+      add(violations, "homogeneous-liquid-notation", "phase-model", "The complete high-temperature field must use phase id and symbol L; L₁ and L₂ are reserved for coexisting liquid compositions and their invariant reaction.", [topPhaseId]);
+    }
   }
 
   const segmentCells = new Map<string, number[]>();
@@ -349,17 +389,23 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
       if (!invariant) continue;
       const union = new Set([...left, ...right]);
       const declared = new Set(invariant.expectedAssemblage);
-      const exactUnion = union.size === declared.size && [...union].every((phase) => declared.has(phase));
+      // Outside a liquid miscibility gap the homogeneous phase is labelled L.
+      // At the monotectic composition that same parent-liquid branch is
+      // conventionally distinguished as L1 from the coexisting product L2.
+      const normalizedUnion = new Set([...union].map((phase) =>
+        invariant.reactionType === "monotectic" && phase === "L" ? "L1" : phase,
+      ));
+      const exactUnion = normalizedUnion.size === declared.size && [...normalizedUnion].every((phase) => declared.has(phase));
       const leftKinds = [...left].map((phase) => phaseKind(phase, phaseById));
       const rightKinds = [...right].map((phase) => phaseKind(phase, phaseById));
-      const syntecticPair = invariant.reactionType === "syntectic"
+      const liquidImmiscibilityPair = ["syntectic", "monotectic"].includes(invariant.reactionType)
         && ((leftKinds.every((kind) => kind === "liquid")
           && rightKinds.filter((kind) => kind === "liquid").length === 1
           && rightKinds.filter((kind) => kind !== "liquid").length === 1)
         || (rightKinds.every((kind) => kind === "liquid")
           && leftKinds.filter((kind) => kind === "liquid").length === 1
           && leftKinds.filter((kind) => kind !== "liquid").length === 1));
-      if (!exactUnion && !syntecticPair) {
+      if (!exactUnion && !liquidImmiscibilityPair) {
         const key = `invariant-adjacent-phases:${sourceId}`;
         if (!reportedAdjacencyRules.has(key)) add(violations, "invariant-adjacent-phases", "reaction", `Fields adjoining ${sourceId} do not realize its declared three-phase reaction.`, [sourceId]);
         reportedAdjacencyRules.add(key);

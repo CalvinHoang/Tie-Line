@@ -3,6 +3,21 @@ export type PointRoleId = string;
 export type GeometryId = string;
 export type CellId = string;
 
+export type BinaryInvariantType =
+  | "eutectic"
+  | "peritectic"
+  | "eutectoid"
+  | "peritectoid"
+  | "catatectic"
+  | "monotectoid"
+  | "monotectic"
+  | "syntectic";
+
+export interface InvariantIncidence {
+  above: PhaseId[][];
+  below: PhaseId[][];
+}
+
 export interface LogicalPoint {
   compositionBPercent: number;
   temperatureCelsius: number;
@@ -106,7 +121,8 @@ export interface RequiredInvariantSpec {
   endRoleId: PointRoleId;
   interiorRoleIds: PointRoleId[];
   expectedAssemblage: PhaseId[];
-  reactionType: string;
+  reactionType: BinaryInvariantType;
+  incidence?: InvariantIncidence;
 }
 
 export interface ExpectedFieldSpec {
@@ -158,7 +174,8 @@ export interface HiddenInvariantSolution {
   interiorRoleIds: PointRoleId[];
   temperatureCelsius: number;
   expectedAssemblage: PhaseId[];
-  reactionType: string;
+  reactionType: BinaryInvariantType;
+  incidence?: InvariantIncidence;
 }
 
 export interface HiddenSolution {

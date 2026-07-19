@@ -72,7 +72,7 @@ export function saveConstruction(state: ConstructionState, difficulty: Difficult
 }
 
 export function constructionHasProgress(state: ConstructionState): boolean {
-  if (state.solved || state.revealed || state.metrics.scoredAttemptEnded) return false;
+  if (state.solved || state.revealed || (state.metrics.scoredAttemptEnded && !state.metrics.continuingUnscored)) return false;
   return Boolean(
     state.metrics.submitCount > 0
     || state.metrics.pointMoveCount > 0

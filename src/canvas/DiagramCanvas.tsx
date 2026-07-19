@@ -23,12 +23,14 @@ type Gesture =
 interface DiagramCanvasProps {
   state: ConstructionState;
   puzzle: PuzzleDefinition;
+  interactionDisabled?: boolean;
   invalidPointIds: Set<string>;
   externalPreview?: { kind: "point" | "phase"; value: string; point: LogicalPoint };
   onPlacePoint: (roleId: string, point: LogicalPoint) => void;
   onAddGeometry: (geometry: PlayerGeometry) => void;
   onUpdateGeometry: (geometry: PlayerGeometry) => void;
   onTogglePhaseInCell: (cellId: string, phaseId: PhaseId) => void;
+  onSelectPhase: (phaseId: PhaseId) => void;
   onRemovePhaseFromCell: (cellId: string, phaseId: PhaseId) => void;
   onDeleteGeometry: (geometryId: string) => void;
   onDeletePoint: (pointId: string) => void;
@@ -51,6 +53,8 @@ function nearestPoint(target: LogicalPoint, points: PlayerPoint[], radius = 4): 
 
 export function DiagramCanvas(props: DiagramCanvasProps) {
   const { state, puzzle } = props;
+  const editingDisabled = state.solved || state.revealed || props.interactionDisabled;
+  const maxViewportScale = puzzle.expectedFieldCount >= 16 ? 6 : 3;
   const svgRef = useRef<SVGSVGElement>(null);
   const [gesture, setGesture] = useState<Gesture>();
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -94,7 +98,6 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   };
 
   const pointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (state.solved || state.revealed) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointers.current.size === 2) {
@@ -107,6 +110,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       setGesture(undefined);
       return;
     }
+    if (editingDisabled) return;
     const logical = toLogical(event.clientX, event.clientY);
     if (!inFrame(logical)) return;
     if (state.activeTool === "point" && state.activePointRoleId) {
@@ -124,7 +128,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       const [a, b] = [...pointers.current.values()];
       const nextDistance = Math.hypot(a.x - b.x, a.y - b.y);
       const nextCenter = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      const scale = Math.min(3, Math.max(0.8, pinch.current.viewport.scale * (nextDistance / pinch.current.distance)));
+      const scale = Math.min(maxViewportScale, Math.max(0.8, pinch.current.viewport.scale * (nextDistance / pinch.current.distance)));
       props.onViewportChange({
         scale,
         translateX: pinch.current.viewport.translateX + (nextCenter.x - pinch.current.center.x) * (VIEWBOX.width / svgRef.current!.clientWidth),
@@ -146,6 +150,25 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     } else if (gesture.kind === "handle") {
       setGesture({ ...gesture, preview: logical });
     }
+  };
+
+  const wheelZoom = (event: React.WheelEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    const rect = svgRef.current!.getBoundingClientRect();
+    const cursor = {
+      x: ((event.clientX - rect.left) / rect.width) * VIEWBOX.width,
+      y: ((event.clientY - rect.top) / rect.height) * VIEWBOX.height,
+    };
+    const nextScale = Math.min(maxViewportScale, Math.max(0.8, state.viewport.scale * Math.exp(-event.deltaY * .0015)));
+    const world = {
+      x: (cursor.x - state.viewport.translateX) / state.viewport.scale,
+      y: (cursor.y - state.viewport.translateY) / state.viewport.scale,
+    };
+    props.onViewportChange({
+      scale: nextScale,
+      translateX: cursor.x - world.x * nextScale,
+      translateY: cursor.y - world.y * nextScale,
+    });
   };
 
   const pointerUp = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -255,7 +278,11 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   const intermediateCompositionLabels = useMemo(() => puzzle.intermediateCompositions.map((composition) => ({
     ...composition,
     x: logicalToSvg({ compositionBPercent: composition.compositionBPercent, temperatureCelsius: 0 }).x,
-  })), [puzzle.intermediateCompositions]);
+    phases: composition.phaseIds.flatMap((phaseId) => {
+      const phase = puzzle.phases.find((candidate) => candidate.id === phaseId);
+      return phase ? [phase] : [];
+    }),
+  })), [puzzle.intermediateCompositions, puzzle.phases]);
 
   const previewPoint = gesture?.kind === "point" || gesture?.kind === "move-point" ? gesture.preview
     : props.externalPreview?.kind === "point" ? props.externalPreview.point : undefined;
@@ -274,6 +301,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       onPointerMove={pointerMove}
       onPointerUp={pointerUp}
       onPointerCancel={pointerUp}
+      onWheel={wheelZoom}
     >
       <defs>
         <pattern id="partial-solubility-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
@@ -310,7 +338,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
           const d = `${logicalPath(cell.polygon)} Z`;
           const phaseClasses = cell.phaseOrder.map((phase) => `field-${phase}`).join(" ");
           return <path key={cell.id} className={`field-target ${cell.phaseOrder.length > 0 ? "is-labelled" : ""} ${targetFeedback?.targetId === cell.id ? "is-confirmed" : ""} ${phaseClasses}`} d={d} onPointerDown={(event) => {
-            if (state.activeTool !== "label" || !state.activePhaseId || state.solved || state.revealed) return;
+            if (state.activeTool !== "label" || !state.activePhaseId || editingDisabled) return;
             event.stopPropagation();
             const phaseId = state.activePhaseId;
             confirmTarget(event, cell.id, phaseId, cell.phaseOrder.includes(phaseId));
@@ -409,7 +437,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
             y={label.y}
             phases={cell.phaseOrder}
             puzzle={puzzle}
-            scale={label.scale}
+            scale={label.scale / state.viewport.scale}
             fitsField={label.fits}
             orientation={label.orientation}
             onRemove={state.activeTool === "erase"
@@ -461,18 +489,34 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
         })()}
 
         <path className="board-frame" d={`M${FRAME.left} ${FRAME.top} V${FRAME.bottom} H${FRAME.right} V${FRAME.top}`} />
-        <text className="axis-label axis-t" x={FRAME.left - 42} y={(FRAME.top + FRAME.bottom) / 2}>T</text>
         <text className="axis-label" x={FRAME.left} y={FRAME.bottom + 26} textAnchor="middle">{puzzle.endMemberLabels.left}</text>
-        {intermediateCompositionLabels.map((composition) => <text
-          key={`intermediate-composition:${composition.id}`}
-          className="axis-label intermediate-composition-label"
-          data-composition={composition.id}
-          data-phases={composition.phaseIds.join(" ")}
-          x={composition.x}
-          y={FRAME.bottom + 26}
-          textAnchor="middle"
-          aria-label={`${composition.label} intermediate composition`}
-        >{composition.label}</text>)}
+        {intermediateCompositionLabels.map((composition) => <g key={`intermediate-composition:${composition.id}`} className="composition-phase-association" data-composition={composition.id}>
+          <text
+            className="axis-label intermediate-composition-label"
+            data-composition={composition.id}
+            data-phases={composition.phaseIds.join(" ")}
+            x={composition.x}
+            y={FRAME.bottom + 26}
+            textAnchor="middle"
+            aria-label={`${composition.label} intermediate composition`}
+          >{composition.label}</text>
+          <line className="composition-phase-link" x1={composition.x} x2={composition.x} y1={FRAME.bottom + 32} y2={FRAME.bottom + 43} />
+          {composition.phases.map((phase, index) => <text
+            key={`${composition.id}:${phase.id}`}
+            className={`composition-phase-label intermediate-phase-symbol phase-${phase.id}`}
+            x={composition.x}
+            y={FRAME.bottom + 62 + index * 24}
+            textAnchor="middle"
+            role="button"
+            tabIndex={editingDisabled ? -1 : 0}
+            aria-label={`Select ${phase.name} phase for ${composition.label}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => { if (!editingDisabled) props.onSelectPhase(phase.id); }}
+            onKeyDown={(event) => {
+              if (!editingDisabled && (event.key === "Enter" || event.key === " ")) props.onSelectPhase(phase.id);
+            }}
+          >{phase.symbol}</text>)}
+        </g>)}
         <text className="axis-label" x={FRAME.right} y={FRAME.bottom + 26} textAnchor="middle">{puzzle.endMemberLabels.right}</text>
       </g>
     </svg>
