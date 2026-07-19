@@ -35,8 +35,8 @@ const WHEEL_COMMIT_DELAY_MS = 140;
 
 const viewportTransform = (viewport: ViewportState) => `translate(${viewport.translateX} ${viewport.translateY}) scale(${viewport.scale})`;
 
-export function maximumViewportScale(expectedFieldCount: number): number {
-  return expectedFieldCount >= 16 ? 6 : 3;
+export function maximumViewportScale(_expectedFieldCount: number): number {
+  return 6;
 }
 
 export function constrainViewport(viewport: ViewportState, maximumScale: number): ViewportState {

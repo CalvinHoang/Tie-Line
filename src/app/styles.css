@@ -191,7 +191,8 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
-  stroke-dasharray: 1;
+  stroke-dasharray: none;
+  stroke-dashoffset: 0;
   animation: draw-line 560ms cubic-bezier(.35, .02, .2, 1) both;
   transition: stroke 180ms ease, stroke-width 180ms ease, opacity 220ms ease;
 }
@@ -715,8 +716,8 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 
 @keyframes draw-line {
-  from { stroke-dashoffset: 1; opacity: .2; }
-  to { stroke-dashoffset: 0; opacity: 1; }
+  from { opacity: .2; }
+  to { opacity: 1; }
 }
 @keyframes node-pop {
   from { opacity: 0; transform: scale(.75); }
