@@ -37,7 +37,9 @@ interface DiagramCanvasProps {
   onRejected: (message: string) => void;
 }
 
-const phaseSymbol = (puzzle: PuzzleDefinition, id: PhaseId) => puzzle.phases.find((phase) => phase.id === id)?.symbol ?? id;
+const phaseLabel = (puzzle: PuzzleDefinition, id: PhaseId) => puzzle.diagramLabels.find((label) => label.id === id);
+const phaseSymbol = (puzzle: PuzzleDefinition, id: PhaseId) => phaseLabel(puzzle, id)?.symbol ?? id;
+const phaseColorId = (puzzle: PuzzleDefinition, id: PhaseId) => phaseLabel(puzzle, id)?.colorPhaseId ?? id;
 const logicalPath = (points: LogicalPoint[]) => points.map((point, index) => {
   const svg = logicalToSvg(point);
   return `${index === 0 ? "M" : "L"}${svg.x} ${svg.y}`;
@@ -279,6 +281,13 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
         <pattern id="partial-solubility-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
           <line x1="0" y1="0" x2="0" y2="9" />
         </pattern>
+        <pattern id="complete-solid-solution-hatch" width="14" height="10" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="5" x2="14" y2="5" />
+        </pattern>
+        <pattern id="ordered-solid-solution-hatch" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+          <line x1="0" y1="0" x2="0" y2="12" />
+          <line x1="6" y1="0" x2="6" y2="12" />
+        </pattern>
         <pattern id="unstable-spinodal-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)">
           <line x1="0" y1="0" x2="0" y2="8" />
         </pattern>
@@ -308,7 +317,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
 
         {state.cells.map((cell) => {
           const d = `${logicalPath(cell.polygon)} Z`;
-          const phaseClasses = cell.phaseOrder.map((phase) => `field-${phase}`).join(" ");
+          const phaseClasses = cell.phaseOrder.map((phase) => `field-${phaseColorId(puzzle, phase)}`).join(" ");
           return <path key={cell.id} className={`field-target ${cell.phaseOrder.length > 0 ? "is-labelled" : ""} ${targetFeedback?.targetId === cell.id ? "is-confirmed" : ""} ${phaseClasses}`} d={d} onPointerDown={(event) => {
             if (state.activeTool !== "label" || !state.activePhaseId || state.solved || state.revealed) return;
             event.stopPropagation();
@@ -393,7 +402,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
           const point = logicalToSvg(targetFeedback.point);
           return <circle
             key={targetFeedback.id}
-            className={`target-contact phase-${targetFeedback.phaseId} ${targetFeedback.removing ? "is-removing" : "is-adding"}`}
+            className={`target-contact phase-${phaseColorId(puzzle, targetFeedback.phaseId)} ${targetFeedback.removing ? "is-removing" : "is-adding"}`}
             cx={point.x}
             cy={point.y}
             r={8}
@@ -507,7 +516,7 @@ function PhaseLabel({ x, y, phases, puzzle, scale = 1, fitsField = true, orienta
               }}
             >
               <rect x={-18} y={-22} width={36} height={34} pointerEvents={onRemove ? "all" : "none"} />
-              <text className={`phase-${phase}`} textAnchor="middle">{phaseSymbol(puzzle, phase)}</text>
+              <text className={`phase-${phaseColorId(puzzle, phase)}`} textAnchor="middle">{phaseSymbol(puzzle, phase)}</text>
               {index < phases.length - 1 && <text className="phase-plus" x={orientation === "horizontal" ? 22 : 0} y={orientation === "horizontal" ? 0 : 18} textAnchor="middle">+</text>}
             </g>
           ))}

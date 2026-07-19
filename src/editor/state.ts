@@ -82,7 +82,7 @@ export function createLabelingState(
     cells: extractFaces(points, geometry),
     activeTool: "label",
     activePointRoleId: undefined,
-    activePhaseId: puzzle.phases[0]?.id,
+    activePhaseId: puzzle.diagramLabels[0]?.id,
   };
 }
 

@@ -191,6 +191,84 @@ function auditPhaseModels(
     if (phase.kind === "intermediate-solid-solution" && singlePhaseCells.length === 0) {
       add(violations, "solid-solution-finite-width", "phase-model", `Intermediate solid solution ${phase.id} requires a finite-area single-phase field.`, [phase.id]);
     }
+
+    const touchesLeft = singlePhaseCells.some((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-left"));
+    const touchesRight = singlePhaseCells.some((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-right"));
+    if (phase.compositionRole === "a-terminal" && (!touchesLeft || touchesRight)) {
+      add(violations, "a-terminal-domain", "phase-model", `${phase.id} is declared A-terminal but does not occupy only the A-side composition edge.`, [phase.id]);
+    }
+    if (phase.compositionRole === "b-terminal" && (!touchesRight || touchesLeft)) {
+      add(violations, "b-terminal-domain", "phase-model", `${phase.id} is declared B-terminal but does not occupy only the B-side composition edge.`, [phase.id]);
+    }
+    if (phase.compositionRole === "intermediate" && (touchesLeft || touchesRight)) {
+      add(violations, "intermediate-domain", "phase-model", `${phase.id} is declared intermediate but reaches an end-member composition edge.`, [phase.id]);
+    }
+    if (phase.compositionRole === "complete-range" && (!touchesLeft || !touchesRight)) {
+      add(violations, "complete-range-domain", "phase-model", `${phase.id} is declared a complete-range solution but does not reach both end-member composition edges.`, [phase.id]);
+    }
+
+    const canonicalSymbol = phase.compositionRole === "a-terminal"
+      ? "α"
+      : phase.compositionRole === "b-terminal"
+        ? "β"
+        : phase.compositionRole === "complete-range" && phase.temperatureRole === "low-temperature"
+          ? "α"
+          : phase.compositionRole === "complete-range" && phase.temperatureRole === "high-temperature"
+            ? "β"
+            : undefined;
+    if (canonicalSymbol && phase.symbol !== canonicalSymbol) {
+      add(violations, "phase-notation-role", "phase-model", `${phase.id} must use ${canonicalSymbol} for its declared composition/temperature role.`, [phase.id]);
+    }
+  }
+
+  const liquidPhases = puzzle.phases.filter((phase) => phase.kind === "liquid");
+  const topLiquidIds = new Set(cells
+    .filter((cell) => cell.boundary.some((edge) => edge.geometryId === "frame-top"))
+    .flatMap((cell) => {
+      const field = fieldForCell(cell, solution);
+      return field?.expectedAssemblage.length === 1 ? field.expectedAssemblage : [];
+    }));
+  const topLiquid = liquidPhases.find((phase) => topLiquidIds.has(phase.id));
+  if (liquidPhases.length === 1) {
+    if (liquidPhases[0].symbol !== "L") {
+      add(violations, "liquid-notation-role", "phase-model", "A single homogeneous liquid must use L.", [liquidPhases[0].id]);
+    }
+  } else if (liquidPhases.length === 2) {
+    const branchLiquid = liquidPhases.find((phase) => phase.id !== topLiquid?.id);
+    if (!topLiquid || topLiquid.symbol !== "L₁" || branchLiquid?.symbol !== "L₂") {
+      add(violations, "liquid-notation-role", "phase-model", "A monotectic parent liquid must be L₁ and its separated liquid product must be L₂.", liquidPhases.map((phase) => phase.id));
+    }
+  } else if (liquidPhases.length > 2) {
+    const branchSymbols = liquidPhases.filter((phase) => phase.id !== topLiquid?.id).map((phase) => phase.symbol);
+    const expectedBranchSymbols = liquidPhases.slice(1).map((_, index) => `L${String(index + 1).replace("1", "₁").replace("2", "₂").replace("3", "₃")}`);
+    if (!topLiquid || topLiquid.symbol !== "L"
+      || branchSymbols.length !== new Set(branchSymbols).size
+      || !expectedBranchSymbols.every((symbol) => branchSymbols.includes(symbol))) {
+      add(violations, "liquid-notation-role", "phase-model", "A homogeneous parent liquid must use L; immiscible branches must use distinct L₁, L₂, … notation.", liquidPhases.map((phase) => phase.id));
+    }
+  }
+
+  for (const invariant of solution.invariants.filter((item) => item.reactionType === "monotectic")) {
+    const parent = phaseById.get(invariant.reactantPhaseIds?.find((id) => phaseById.get(id)?.kind === "liquid") ?? "");
+    const product = phaseById.get(invariant.productPhaseIds?.find((id) => phaseById.get(id)?.kind === "liquid") ?? "");
+    if (parent?.symbol !== "L₁" || product?.symbol !== "L₂") {
+      add(violations, "monotectic-liquid-identity", "reaction", "Monotectic notation must follow L₁ → L₂ + solid on cooling.", [parent?.id, product?.id].filter((id): id is string => Boolean(id)));
+    }
+  }
+
+  const equivalenceGroups = new Map<string, PhaseDefinition[]>();
+  puzzle.phases.forEach((phase) => {
+    if (!phase.labelEquivalenceGroup) return;
+    equivalenceGroups.set(phase.labelEquivalenceGroup, [...(equivalenceGroups.get(phase.labelEquivalenceGroup) ?? []), phase]);
+  });
+  for (const [groupId, group] of equivalenceGroups) {
+    const familyIds = new Set(group.map((phase) => phase.phaseFamilyId));
+    const temperatureRoles = new Set(group.map((phase) => phase.temperatureRole));
+    if (group.length < 2 || familyIds.size !== 1 || familyIds.has(undefined)
+      || group.some((phase) => phase.compositionRole !== "complete-range")
+      || temperatureRoles.size !== group.length || temperatureRoles.has(undefined)) {
+      add(violations, "label-equivalence-unanchored", "phase-model", `Label-equivalence group ${groupId} must contain distinct temperature variants of one complete-range phase family.`, group.map((phase) => phase.id));
+    }
   }
 
   const phaseGroups = new Map<string, PhaseDefinition[]>();
@@ -265,6 +343,47 @@ function auditSpinodal(
     if (!field || field.expectedAssemblage.length !== 2
       || !field.expectedAssemblage.every((phaseId) => phaseId.startsWith("L"))) {
       add(violations, "spinodal-inside-two-liquid-field", "phase-model", "Spinodal branches must lie inside the equilibrium two-liquid field.", [geometry.id]);
+    }
+  }
+}
+
+function auditDiagramNotation(
+  puzzle: PuzzleDefinition,
+  solution: HiddenSolution,
+  violations: EquilibriumViolation[],
+): void {
+  const labels = new Map(puzzle.diagramLabels.map((label) => [label.id, label]));
+  if (labels.size !== puzzle.diagramLabels.length) {
+    add(violations, "diagram-label-id-unique", "phase-model", "Every diagram label token must have a unique id.");
+  }
+  for (const field of solution.expectedFields) {
+    const labelIds = field.expectedLabelIds ?? [];
+    if (labelIds.length !== field.expectedAssemblage.length) {
+      add(violations, "field-label-projection-cardinality", "phase-model", `Field ${field.role} must project every thermodynamic phase to one diagram label.`);
+      continue;
+    }
+    const remaining = [...field.expectedAssemblage];
+    for (const labelId of labelIds) {
+      const label = labels.get(labelId);
+      if (!label) {
+        add(violations, "field-label-defined", "phase-model", `Field ${field.role} references undefined diagram label ${labelId}.`);
+        continue;
+      }
+      const index = remaining.findIndex((phaseId) => label.phaseIds.includes(phaseId));
+      if (index < 0) {
+        add(violations, "field-label-projects-assemblage", "phase-model", `Label ${label.symbol} does not represent any remaining phase in field ${field.role}.`);
+      } else {
+        remaining.splice(index, 1);
+      }
+      if (field.expectedAssemblage.length === 1 && label.scope !== "global-phase") {
+        add(violations, "single-phase-uses-global-notation", "phase-model", `Single-phase field ${field.role} must use global phase notation, not an invariant branch subscript.`);
+      }
+    }
+  }
+  for (const [index, invariant] of solution.invariants.entries()) {
+    const notation = invariant.participantNotation ?? {};
+    if (invariant.expectedAssemblage.some((phaseId) => !notation[phaseId])) {
+      add(violations, "invariant-local-notation-complete", "phase-model", `Invariant ${index + 1} must define local notation for every participant.`, [`generated-horizontal:${index}`]);
     }
   }
 }
@@ -398,6 +517,7 @@ export function auditPhaseEquilibria(puzzle: PuzzleDefinition, solution: HiddenS
   auditInvariantReactions(puzzle, solution, phaseById, violations);
   auditPhaseModels(puzzle, solution, cells, phaseById, violations);
   auditSpinodal(solution, diagram, cells, violations);
+  auditDiagramNotation(puzzle, solution, violations);
 
   return { valid: violations.length === 0, violations, cellCount: cells.length, adjacencyCount };
 }

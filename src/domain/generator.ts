@@ -1,7 +1,10 @@
 import { extractFaces } from "../canvas/face-extraction";
 import { polygonArea, sameLogicalPoint } from "./geometry";
 import { assertPhaseEquilibria } from "./phase-equilibria-validator";
+import { adaptPhaseIdentities } from "./phase-identity-adapter";
 import { boundaryKindForRole, REACTION_RULES } from "./phase-rules";
+import { auditRoundThermodynamicRealizability } from "./round-thermodynamic-audit";
+import { assemblePhaseTopology } from "./topology-assembler";
 import type {
   ExpectedFieldSpec,
   HiddenSolution,
@@ -11,6 +14,7 @@ import type {
   PlayerPoint,
   PuzzleDefinition,
   RequiredInvariantSpec,
+  ReactionType,
   SolutionCurve,
 } from "./schema";
 
@@ -29,7 +33,7 @@ export type DiagramFamily =
   | "metatectic"
   | "syntectic"
   | "subsolidus-polymorph"
-  | "supersolidus-polymorph"
+  | "coupled-eutectic-peritectic"
   | "superlattice"
   | "triple-eutectic"
   | "liquid-immiscibility";
@@ -44,7 +48,34 @@ export interface GeneratedRound {
   intermediatePhaseCount?: number;
   criticalPointCount?: number;
   layoutQualityScore?: number;
+  thermodynamicCertificate?: {
+    scope: "local-invariant-realizability";
+    certifiedInvariantCount: number;
+  };
+  topologyCertificate?: {
+    schemaVersion: "phase-topology-v1";
+    certifiedInvariantTypes: string[];
+    certifiedInvariantCount: number;
+    scope: "generated-diagram";
+  };
+  generationContract?: {
+    ruleId: string;
+    weight: number;
+    targetPercent: number;
+    requiredInvariantTypes: ReactionType[];
+    requiredInvariantCounts: Partial<Record<ReactionType, number>>;
+    requiredFeatures: GenerationFeature[];
+  };
 }
+
+export type GenerationFeature =
+  | "compound"
+  | "partial-solubility"
+  | "polymorphism"
+  | "ordering"
+  | "liquid-immiscibility"
+  | "spinodal"
+  | "intermediate-phase";
 
 const point = (compositionBPercent: number, temperatureCelsius: number): LogicalPoint => ({ compositionBPercent, temperatureCelsius });
 
@@ -251,7 +282,7 @@ function puzzleFrom(
   const compound = solution.points.some((item) => item.roleId === "gamma" || item.roleId.startsWith("gamma-"));
   const ruledInventory = intermediateRules(seed, solution, phaseInventory ?? phases(compound), endMemberLabels);
   return {
-    schemaVersion: "tie-line-labels-2",
+    schemaVersion: "tie-line-labels-3",
     id: solution.puzzleId,
     title: familyLabel,
     compositionMinPercentB: 0,
@@ -261,6 +292,15 @@ function puzzleFrom(
     endMemberLabels,
     intermediateCompositions: ruledInventory.intermediateCompositions,
     phases: ruledInventory.phases,
+    diagramLabels: ruledInventory.phases.map((phase) => ({
+      id: phase.id,
+      symbol: phase.symbol,
+      name: phase.name,
+      phaseIds: [phase.id],
+      scope: "global-phase" as const,
+      colorPhaseId: phase.id,
+      labelEquivalenceGroup: phase.labelEquivalenceGroup,
+    })),
     pointRoles: solution.points.map(({ roleId, point: anchor }) => ({
       id: roleId,
       symbol: roleId,
@@ -290,7 +330,7 @@ function puzzleFrom(
   };
 }
 
-function generateSimple(seed: number): GeneratedRound {
+function generateSimple(seed: number, difficulty: Difficulty = "easy"): GeneratedRound {
   const random = randomForSeed(seed);
   const ex = integer(random, 34, 66);
   const et = integer(random, 470, 640, 10);
@@ -319,7 +359,7 @@ function generateSimple(seed: number): GeneratedRound {
     return { role: "liquid-beta", phases: ["L", "beta"] };
   }, 4);
   const requiredInvariants = requiredInvariantsFor(solution);
-  return { seed, difficulty: "easy", family: "simple-eutectic", solution, puzzle: puzzleFrom(seed, "easy", "Simple eutectic", solution, requiredInvariants) };
+  return { seed, difficulty, family: "simple-eutectic", solution, puzzle: puzzleFrom(seed, difficulty, "Simple eutectic", solution, requiredInvariants) };
 }
 
 function generateLimited(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
@@ -664,14 +704,15 @@ function generateMonotectic(seed: number, difficulty: Difficulty = "hard"): Gene
     expectedFields: [],
   };
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
-    if (boundaries.has("frame-top")) return { role: "L1", phases: ["L1"] };
+    if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "L1-L2", phases: ["L1", "L2"] };
     if (boundaries.has("frame-bottom")) return { role: "beta-alpha", phases: ["beta", "alpha"] };
     if (boundaries.has("generated-curve:3") && label.compositionBPercent < eutecticX) return { role: "L2-beta", phases: ["L2", "beta"] };
     if (label.temperatureCelsius < invariantT) return { role: "L2-alpha", phases: ["L2", "alpha"] };
-    return { role: "L1-alpha", phases: ["L1", "alpha"] };
+    return { role: "L-alpha", phases: ["L", "alpha"] };
   }, 6);
   const inventory: PhaseDefinition[] = [
+    { id: "L", symbol: "L", name: "Homogeneous liquid", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
     { id: "L1", symbol: "L₁", name: "Parent liquid", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
     { id: "L2", symbol: "L₂", name: "Second liquid", kind: "liquid", required: true, phaseFamilyId: "liquid-solution" },
     { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
@@ -726,18 +767,18 @@ function generateSubsolidusPolymorph(seed: number, difficulty: Difficulty = "nor
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "liquid-parent", phases: ["L", "gamma"] };
     if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3")) return { role: "polymorph-coexistence", phases: ["gamma", "delta"] };
-    if (boundaries.has("frame-bottom")) return { role: "low-temperature-polymorph", phases: ["delta"], texture: "partial-solubility" };
-    return { role: "high-temperature-polymorph", phases: ["gamma"], texture: "partial-solubility" };
+    if (boundaries.has("frame-bottom")) return { role: "low-temperature-polymorph", phases: ["delta"], texture: "complete-solid-solution" };
+    return { role: "high-temperature-polymorph", phases: ["gamma"], texture: "complete-solid-solution" };
   }, 5);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
-    { id: "gamma", symbol: "α", name: "High-temperature solid solution", kind: "terminal-solid", required: true, phaseFamilyId: "polymorph" },
-    { id: "delta", symbol: "β", name: "Low-temperature solid solution", kind: "terminal-solid", required: true, phaseFamilyId: "polymorph" },
+    { id: "gamma", symbol: "β", name: "High-temperature solid solution", kind: "terminal-solid", required: true, phaseFamilyId: "polymorph", compositionRole: "complete-range", temperatureRole: "high-temperature", labelEquivalenceGroup: "unanchored-complete-solution-polymorphs" },
+    { id: "delta", symbol: "α", name: "Low-temperature solid solution", kind: "terminal-solid", required: true, phaseFamilyId: "polymorph", compositionRole: "complete-range", temperatureRole: "low-temperature", labelEquivalenceGroup: "unanchored-complete-solution-polymorphs" },
   ];
   return { seed, difficulty, family: "subsolidus-polymorph", solution, puzzle: puzzleFrom(seed, difficulty, "Subsolidus polymorphism in a complete solid solution", solution, [], inventory) };
 }
 
-function generateSupersolidusPolymorph(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
+function generateCoupledEutecticPeritectic(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
   const random = randomForSeed(seed ^ 0x73a1f9);
   const eutecticT = integer(random, 380, 470, 10);
   const peritecticT = eutecticT + integer(random, 150, 220, 10);
@@ -750,7 +791,7 @@ function generateSupersolidusPolymorph(seed: number, difficulty: Difficulty = "n
   const aMelt = integer(random, peritecticT + 270, 1050, 10);
   const bMelt = integer(random, peritecticT + 210, 1020, 10);
   const solution: HiddenSolution = {
-    puzzleId: `${difficulty}-supersolidus-polymorph-peritectic-v1-${seed}`,
+    puzzleId: `${difficulty}-coupled-eutectic-peritectic-v1-${seed}`,
     points: [
       { roleId: "a-melt", point: point(0, aMelt) }, { roleId: "b-melt", point: point(100, bMelt) },
       { roleId: "alpha-eutectic", point: point(alphaEutX, eutecticT) },
@@ -785,21 +826,21 @@ function generateSupersolidusPolymorph(seed: number, difficulty: Difficulty = "n
   solution.expectedFields = deriveExpectedFields(solution, (_label, boundaries) => {
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:3")) return { role: "liquid-alpha", phases: ["L", "alpha"] };
-    if (boundaries.has("generated-curve:1") && boundaries.has("generated-curve:4")) return { role: "liquid-low-polymorph", phases: ["L", "gamma"] };
-    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:5")) return { role: "liquid-high-polymorph", phases: ["L", "delta"] };
+    if (boundaries.has("generated-curve:1") && boundaries.has("generated-curve:4")) return { role: "liquid-intermediate", phases: ["L", "gamma"] };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:5")) return { role: "liquid-beta", phases: ["L", "delta"] };
     if (boundaries.has("generated-curve:3") && boundaries.has("generated-curve:6")) return { role: "alpha", phases: ["alpha"], texture: "partial-solubility" };
-    if (boundaries.has("generated-curve:6") && boundaries.has("generated-curve:7")) return { role: "alpha-low-polymorph", phases: ["alpha", "gamma"] };
-    if (boundaries.has("generated-curve:7") && boundaries.has("generated-curve:8")) return { role: "low-polymorph", phases: ["gamma"], texture: "partial-solubility" };
-    if (boundaries.has("generated-curve:8") && boundaries.has("generated-curve:9")) return { role: "polymorph-coexistence", phases: ["gamma", "delta"] };
-    return { role: "high-polymorph", phases: ["delta"], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:6") && boundaries.has("generated-curve:7")) return { role: "alpha-gamma", phases: ["alpha", "gamma"] };
+    if (boundaries.has("generated-curve:7") && boundaries.has("generated-curve:8")) return { role: "gamma", phases: ["gamma"], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:8") && boundaries.has("generated-curve:9")) return { role: "gamma-beta", phases: ["gamma", "delta"] };
+    return { role: "beta", phases: ["delta"], texture: "partial-solubility" };
   }, 9);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
-    { id: "alpha", symbol: "α", name: "Terminal solid solution", kind: "terminal-solid", required: true },
-    { id: "gamma", symbol: "γ", name: "Low-temperature solid-solution polymorph", kind: "terminal-solid", required: true, phaseFamilyId: "polymorph" },
-    { id: "delta", symbol: "γ′", name: "High-temperature solid-solution polymorph", kind: "terminal-solid", required: true, phaseFamilyId: "polymorph" },
+    { id: "alpha", symbol: "α", name: "A-rich terminal solid solution", kind: "terminal-solid", required: true, compositionRole: "a-terminal" },
+    { id: "gamma", symbol: "γ", name: "Intermediate solid solution", kind: "intermediate-solid-solution", required: true, compositionRole: "intermediate" },
+    { id: "delta", symbol: "β", name: "B-rich terminal solid solution", kind: "terminal-solid", required: true, compositionRole: "b-terminal" },
   ];
-  return { seed, difficulty, family: "supersolidus-polymorph", solution, puzzle: puzzleFrom(seed, difficulty, "Supersolidus polymorphism with a peritectic", solution, requiredInvariantsFor(solution), inventory) };
+  return { seed, difficulty, family: "coupled-eutectic-peritectic", solution, puzzle: puzzleFrom(seed, difficulty, "Coupled eutectic-peritectic system", solution, requiredInvariantsFor(solution), inventory) };
 }
 
 function generateSuperlatticeSolution(seed: number, difficulty: Difficulty = "normal"): GeneratedRound {
@@ -830,8 +871,8 @@ function generateSuperlatticeSolution(seed: number, difficulty: Difficulty = "no
   solution.expectedFields = deriveExpectedFields(solution, (label, boundaries) => {
     if (boundaries.has("frame-top")) return { role: "liquid", phases: ["L"] };
     if (boundaries.has("generated-curve:0") && boundaries.has("generated-curve:1")) return { role: "liquid-disordered-solution", phases: ["L", "gamma"] };
-    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3") && label.temperatureCelsius < orderT) return { role: "ordered-superlattice", phases: ["delta"], texture: "partial-solubility" };
-    return { role: "disordered-solid-solution", phases: ["gamma"], texture: "partial-solubility" };
+    if (boundaries.has("generated-curve:2") && boundaries.has("generated-curve:3") && label.temperatureCelsius < orderT) return { role: "ordered-superlattice", phases: ["delta"], texture: "ordered-solid-solution" };
+    return { role: "disordered-solid-solution", phases: ["gamma"], texture: "complete-solid-solution" };
   }, 4);
   const inventory: PhaseDefinition[] = [
     { id: "L", symbol: "L", name: "Liquid", kind: "liquid", required: true },
@@ -1007,7 +1048,25 @@ function generateSolidDecompositionSystem(
 }
 
 function annotateRound(round: GeneratedRound): GeneratedRound {
+  const adaptedIdentity = adaptPhaseIdentities(round.puzzle, round.solution);
+  round = { ...round, puzzle: adaptedIdentity.puzzle, solution: adaptedIdentity.solution };
+  const invariantTypes = [...new Set(round.solution.invariants.map((item) => item.reactionType))];
+  const topologyAssembly = invariantTypes.length === 0
+    ? undefined
+    : assemblePhaseTopology({
+      invariantTargets: invariantTypes.map((type) => ({ type, weight: 1, minCount: 1, maxCount: 1 })),
+      required: { invariantCount: { min: invariantTypes.length, max: invariantTypes.length } },
+    }, round.seed);
+  if (topologyAssembly && !topologyAssembly.accepted) {
+    const detail = topologyAssembly.rejections.map((item) => `${item.code}: ${item.message}`).join("\n");
+    throw new Error(`${round.solution.puzzleId} failed topology assembly:\n${detail}`);
+  }
   assertPhaseEquilibria(round.puzzle, round.solution);
+  const thermodynamicAudit = auditRoundThermodynamicRealizability(round.puzzle, round.solution);
+  if (!thermodynamicAudit.valid) {
+    const detail = thermodynamicAudit.violations.map((item) => `${item.ruleId}: ${item.message}`).join("\n");
+    throw new Error(`${round.solution.puzzleId} failed local Gibbs realizability:\n${detail}`);
+  }
   const { points, geometry } = generatedGeometry(round.solution);
   const cells = extractFaces(points, geometry);
   const minimumArea = Math.min(...cells.map((cell) => Math.abs(polygonArea(cell.polygon))));
@@ -1030,64 +1089,149 @@ function annotateRound(round: GeneratedRound): GeneratedRound {
     && (item.roleId === "critical" || item.roleId === "dome-peak" || item.roleId === "order-critical"),
   );
   const reactionTypes = new Set<string>(round.solution.invariants.map((item) => item.reactionType));
-  if (["liquid-spinodal", "subsolidus-polymorph", "supersolidus-polymorph", "superlattice"].includes(round.family)) reactionTypes.add(round.family);
+  if (["liquid-spinodal", "subsolidus-polymorph", "superlattice"].includes(round.family)) reactionTypes.add(round.family);
   return {
     ...round,
     reactionTypes: [...reactionTypes],
     intermediatePhaseCount,
     criticalPointCount: invariantCriticalRoles.size + nonInvariantCriticalRoles.length,
     layoutQualityScore: Math.min(100, Math.round(minimumArea / 4)),
+    thermodynamicCertificate: {
+      scope: thermodynamicAudit.scope,
+      certifiedInvariantCount: thermodynamicAudit.certifiedInvariants.length,
+    },
+    topologyCertificate: topologyAssembly?.accepted ? {
+      schemaVersion: topologyAssembly.graph.schemaVersion,
+      certifiedInvariantTypes: invariantTypes,
+      certifiedInvariantCount: round.solution.invariants.length,
+      scope: "generated-diagram",
+    } : undefined,
   };
 }
 
 type FamilyGenerator = (seed: number) => GeneratedRound;
 
-/** The playable pools are declarative registries; adding a family requires no routing branch. */
-export const FAMILY_POOLS: Record<Difficulty, readonly FamilyGenerator[]> = {
+export interface FamilyGenerationRule {
+  id: string;
+  weight: number;
+  generate: FamilyGenerator;
+  requiredInvariantTypes: ReactionType[];
+  requiredInvariantCounts?: Partial<Record<ReactionType, number>>;
+  requiredFeatures: GenerationFeature[];
+}
+
+/** Weighted accepted-output rules. Weights are integer percentage shares within each difficulty. */
+export const FAMILY_RULES: Record<Difficulty, readonly FamilyGenerationRule[]> = {
   easy: [
-    (seed) => generateCompound(seed, "easy"),
-    (seed) => generateIncongruentCompound(seed, "easy"),
-    (seed) => generateLimited(seed, "easy"),
-    generateSimple,
-    (seed) => generatePeritectoidSystem(seed, "easy"),
-    (seed) => generateSubsolidusPolymorph(seed, "easy"),
-    (seed) => generateSolidDecompositionSystem(seed, "easy", "eutectoid"),
+    { id: "compound-double-eutectic", weight: 1, generate: (seed) => generateCompound(seed, "easy"), requiredInvariantTypes: ["eutectic"], requiredInvariantCounts: { eutectic: 2 }, requiredFeatures: ["compound"] },
+    { id: "peritectic", weight: 1, generate: (seed) => generateIncongruentCompound(seed, "easy"), requiredInvariantTypes: ["eutectic", "peritectic"], requiredFeatures: ["compound"] },
+    { id: "limited-eutectic", weight: 1, generate: (seed) => generateLimited(seed, "easy"), requiredInvariantTypes: ["eutectic"], requiredFeatures: ["partial-solubility"] },
+    { id: "simple-eutectic", weight: 1, generate: generateSimple, requiredInvariantTypes: ["eutectic"], requiredFeatures: [] },
+    { id: "peritectoid", weight: 1, generate: (seed) => generatePeritectoidSystem(seed, "easy"), requiredInvariantTypes: ["eutectic", "peritectoid"], requiredFeatures: ["intermediate-phase"] },
+    { id: "subsolidus-polymorph", weight: 1, generate: (seed) => generateSubsolidusPolymorph(seed, "easy"), requiredInvariantTypes: [], requiredFeatures: ["polymorphism"] },
+    { id: "eutectoid", weight: 1, generate: (seed) => generateSolidDecompositionSystem(seed, "easy", "eutectoid"), requiredInvariantTypes: ["eutectoid"], requiredFeatures: ["partial-solubility"] },
   ],
   normal: [
-    (seed) => generateCompound(seed, "normal"),
-    (seed) => generateIncongruentCompound(seed, "normal"),
-    (seed) => generateLimited(seed, "normal"),
-    (seed) => generatePeritectoidSystem(seed, "normal"),
-    (seed) => generateSubsolidusPolymorph(seed, "normal"),
-    (seed) => generateSupersolidusPolymorph(seed, "normal"),
-    (seed) => generateSuperlatticeSolution(seed, "normal"),
-    (seed) => generateSolidDecompositionSystem(seed, "normal", "eutectoid"),
-    (seed) => generateSolidDecompositionSystem(seed, "normal", "monotectoid"),
-    (seed) => generateSolidDecompositionSystem(seed, "normal", "metatectic"),
+    { id: "compound-double-eutectic", weight: 1, generate: (seed) => generateCompound(seed, "normal"), requiredInvariantTypes: ["eutectic"], requiredInvariantCounts: { eutectic: 2 }, requiredFeatures: ["compound"] },
+    { id: "peritectic", weight: 1, generate: (seed) => generateIncongruentCompound(seed, "normal"), requiredInvariantTypes: ["eutectic", "peritectic"], requiredFeatures: ["compound"] },
+    { id: "limited-eutectic", weight: 1, generate: (seed) => generateLimited(seed, "normal"), requiredInvariantTypes: ["eutectic"], requiredFeatures: ["partial-solubility"] },
+    { id: "peritectoid", weight: 1, generate: (seed) => generatePeritectoidSystem(seed, "normal"), requiredInvariantTypes: ["eutectic", "peritectoid"], requiredFeatures: ["intermediate-phase"] },
+    { id: "subsolidus-polymorph", weight: 1, generate: (seed) => generateSubsolidusPolymorph(seed, "normal"), requiredInvariantTypes: [], requiredFeatures: ["polymorphism"] },
+    { id: "coupled-eutectic-peritectic", weight: 1, generate: (seed) => generateCoupledEutecticPeritectic(seed, "normal"), requiredInvariantTypes: ["eutectic", "peritectic"], requiredFeatures: ["partial-solubility", "intermediate-phase"] },
+    { id: "superlattice", weight: 1, generate: (seed) => generateSuperlatticeSolution(seed, "normal"), requiredInvariantTypes: [], requiredFeatures: ["ordering"] },
+    { id: "eutectoid", weight: 1, generate: (seed) => generateSolidDecompositionSystem(seed, "normal", "eutectoid"), requiredInvariantTypes: ["eutectoid"], requiredFeatures: ["partial-solubility"] },
+    { id: "monotectoid", weight: 1, generate: (seed) => generateSolidDecompositionSystem(seed, "normal", "monotectoid"), requiredInvariantTypes: ["monotectoid"], requiredFeatures: ["partial-solubility"] },
+    { id: "metatectic", weight: 1, generate: (seed) => generateSolidDecompositionSystem(seed, "normal", "metatectic"), requiredInvariantTypes: ["eutectic", "metatectic"], requiredFeatures: ["partial-solubility"] },
   ],
   hard: [
-    generateTripleEutectic,
-    (seed) => generateImmiscibleHard(seed, "syntectic"),
-    (seed) => generateMonotectic(seed, "hard"),
-    (seed) => generateImmiscibleHard(seed, "liquid-spinodal"),
-    (seed) => generateCompound(seed, "hard"),
-    (seed) => generateIncongruentCompound(seed, "hard"),
-    (seed) => generateLimited(seed, "hard"),
-    (seed) => generatePeritectoidSystem(seed, "hard"),
-    (seed) => generateSubsolidusPolymorph(seed, "hard"),
-    (seed) => generateSupersolidusPolymorph(seed, "hard"),
-    (seed) => generateSuperlatticeSolution(seed, "hard"),
-    generateSimple,
-    (seed) => generateSolidDecompositionSystem(seed, "hard", "eutectoid"),
-    (seed) => generateSolidDecompositionSystem(seed, "hard", "monotectoid"),
-    (seed) => generateSolidDecompositionSystem(seed, "hard", "metatectic"),
+    { id: "triple-eutectic", weight: 1, generate: generateTripleEutectic, requiredInvariantTypes: ["eutectic"], requiredInvariantCounts: { eutectic: 3 }, requiredFeatures: ["compound"] },
+    { id: "syntectic", weight: 1, generate: (seed) => generateImmiscibleHard(seed, "syntectic"), requiredInvariantTypes: ["syntectic", "eutectic"], requiredInvariantCounts: { syntectic: 1, eutectic: 2 }, requiredFeatures: ["liquid-immiscibility", "intermediate-phase"] },
+    { id: "monotectic", weight: 1, generate: (seed) => generateMonotectic(seed, "hard"), requiredInvariantTypes: ["monotectic", "eutectic"], requiredFeatures: ["liquid-immiscibility"] },
+    { id: "liquid-spinodal", weight: 1, generate: (seed) => generateImmiscibleHard(seed, "liquid-spinodal"), requiredInvariantTypes: ["syntectic", "eutectic"], requiredInvariantCounts: { syntectic: 1, eutectic: 2 }, requiredFeatures: ["liquid-immiscibility", "spinodal", "intermediate-phase"] },
+    { id: "compound-double-eutectic", weight: 1, generate: (seed) => generateCompound(seed, "hard"), requiredInvariantTypes: ["eutectic"], requiredInvariantCounts: { eutectic: 2 }, requiredFeatures: ["compound"] },
+    { id: "peritectic", weight: 1, generate: (seed) => generateIncongruentCompound(seed, "hard"), requiredInvariantTypes: ["eutectic", "peritectic"], requiredFeatures: ["compound"] },
+    { id: "limited-eutectic", weight: 1, generate: (seed) => generateLimited(seed, "hard"), requiredInvariantTypes: ["eutectic"], requiredFeatures: ["partial-solubility"] },
+    { id: "peritectoid", weight: 1, generate: (seed) => generatePeritectoidSystem(seed, "hard"), requiredInvariantTypes: ["eutectic", "peritectoid"], requiredFeatures: ["intermediate-phase"] },
+    { id: "subsolidus-polymorph", weight: 1, generate: (seed) => generateSubsolidusPolymorph(seed, "hard"), requiredInvariantTypes: [], requiredFeatures: ["polymorphism"] },
+    { id: "coupled-eutectic-peritectic", weight: 1, generate: (seed) => generateCoupledEutecticPeritectic(seed, "hard"), requiredInvariantTypes: ["eutectic", "peritectic"], requiredFeatures: ["partial-solubility", "intermediate-phase"] },
+    { id: "superlattice", weight: 1, generate: (seed) => generateSuperlatticeSolution(seed, "hard"), requiredInvariantTypes: [], requiredFeatures: ["ordering"] },
+    { id: "simple-eutectic", weight: 1, generate: (seed) => generateSimple(seed, "hard"), requiredInvariantTypes: ["eutectic"], requiredFeatures: [] },
+    { id: "eutectoid", weight: 1, generate: (seed) => generateSolidDecompositionSystem(seed, "hard", "eutectoid"), requiredInvariantTypes: ["eutectoid"], requiredFeatures: ["partial-solubility"] },
+    { id: "monotectoid", weight: 1, generate: (seed) => generateSolidDecompositionSystem(seed, "hard", "monotectoid"), requiredInvariantTypes: ["monotectoid"], requiredFeatures: ["partial-solubility"] },
+    { id: "metatectic", weight: 1, generate: (seed) => generateSolidDecompositionSystem(seed, "hard", "metatectic"), requiredInvariantTypes: ["eutectic", "metatectic"], requiredFeatures: ["partial-solubility"] },
   ],
 };
 
+/** Compatibility view for tests and direct family sampling. */
+export const FAMILY_POOLS: Record<Difficulty, readonly FamilyGenerator[]> = {
+  easy: FAMILY_RULES.easy.map((rule) => rule.generate),
+  normal: FAMILY_RULES.normal.map((rule) => rule.generate),
+  hard: FAMILY_RULES.hard.map((rule) => rule.generate),
+};
+
+function weightedRule(seed: number, difficulty: Difficulty): { rule: FamilyGenerationRule; targetPercent: number } {
+  const rules = FAMILY_RULES[difficulty];
+  const total = rules.reduce((sum, rule) => {
+    if (!Number.isInteger(rule.weight) || rule.weight <= 0) throw new Error(`Generation weight for ${rule.id} must be a positive integer.`);
+    return sum + rule.weight;
+  }, 0);
+  let slot = seed % total;
+  for (const rule of rules) {
+    if (slot < rule.weight) return { rule, targetPercent: (rule.weight / total) * 100 };
+    slot -= rule.weight;
+  }
+  throw new Error("Weighted generation registry is empty.");
+}
+
+function roundHasFeature(round: GeneratedRound, feature: GenerationFeature): boolean {
+  switch (feature) {
+    case "compound": return round.puzzle.phases.some((phase) => phase.kind === "line-compound");
+    case "partial-solubility": return round.solution.expectedFields.some((field) => field.texture === "partial-solubility");
+    case "polymorphism": return round.puzzle.phases.some((phase) => phase.temperatureRole)
+      || round.solution.curves.some((curve) => curve.boundaryKind === "polymorph-boundary");
+    case "ordering": return round.solution.curves.some((curve) => curve.boundaryKind === "ordering-boundary");
+    case "liquid-immiscibility": return round.solution.curves.some((curve) => curve.boundaryKind === "miscibility-gap");
+    case "spinodal": return round.solution.curves.some((curve) => curve.boundaryKind === "stability-guide");
+    case "intermediate-phase": return round.puzzle.phases.some((phase) => phase.kind === "line-compound"
+      || phase.kind === "intermediate-solid-solution"
+      || phase.compositionRole === "intermediate");
+  }
+}
+
 export function generateRound(rawSeed: number, difficulty: Difficulty = "normal"): GeneratedRound {
   const seed = rawSeed >>> 0;
-  const generator = FAMILY_POOLS[difficulty][seed % FAMILY_POOLS[difficulty].length];
-  return annotateRound(generator(seed));
+  const { rule, targetPercent } = weightedRule(seed, difficulty);
+  const round = annotateRound(rule.generate(seed));
+  const actualInvariantTypes = new Set(round.solution.invariants.map((item) => item.reactionType));
+  const requiredInvariantTypes = new Set(rule.requiredInvariantTypes);
+  if (actualInvariantTypes.size !== requiredInvariantTypes.size
+    || [...actualInvariantTypes].some((type) => !requiredInvariantTypes.has(type))) {
+    throw new Error(`${round.solution.puzzleId} does not realize generation rule ${rule.id}'s invariant contract.`);
+  }
+  const requiredInvariantCounts = Object.fromEntries(rule.requiredInvariantTypes.map((type) => [
+    type,
+    rule.requiredInvariantCounts?.[type] ?? 1,
+  ])) as Partial<Record<ReactionType, number>>;
+  const actualInvariantCounts = round.solution.invariants.reduce<Partial<Record<ReactionType, number>>>((counts, invariant) => ({
+    ...counts,
+    [invariant.reactionType]: (counts[invariant.reactionType] ?? 0) + 1,
+  }), {});
+  if (rule.requiredInvariantTypes.some((type) => actualInvariantCounts[type] !== requiredInvariantCounts[type])) {
+    throw new Error(`${round.solution.puzzleId} does not realize generation rule ${rule.id}'s invariant occurrence contract.`);
+  }
+  const missingFeature = rule.requiredFeatures.find((feature) => !roundHasFeature(round, feature));
+  if (missingFeature) throw new Error(`${round.solution.puzzleId} does not realize required feature ${missingFeature}.`);
+  return {
+    ...round,
+    generationContract: {
+      ruleId: rule.id,
+      weight: rule.weight,
+      targetPercent,
+      requiredInvariantTypes: [...rule.requiredInvariantTypes],
+      requiredInvariantCounts,
+      requiredFeatures: [...rule.requiredFeatures],
+    },
+  };
 }
 
 export function generateEutecticRound(rawSeed: number): GeneratedRound {

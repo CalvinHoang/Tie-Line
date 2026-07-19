@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DiagramCanvas } from "../canvas/DiagramCanvas";
 import { createPuzzleSeed, generateRound, type Difficulty, type GeneratedRound } from "../domain/generator";
 import { pointInPolygon, sameLogicalPoint } from "../domain/geometry";
+import { expectedLabels } from "../domain/diagram-notation";
 import { RULE_CATEGORIES, RULE_CONCEPTS, type RuleConcept } from "../domain/concepts";
 import type { ConstructionState, ViewportState } from "../domain/schema";
 import {
@@ -311,7 +312,11 @@ export function App() {
   const revealSolution = () => {
     commit((current) => ({
       ...pauseTimer(current),
-      cells: current.cells.map((cell) => ({ ...cell, phaseOrder: (solution.expectedFields.find((field) => sameLogicalPoint(field.witnessPoint, cell.labelPoint)) ?? solution.expectedFields.find((field) => pointInPolygon(field.witnessPoint, cell.polygon)))?.expectedAssemblage ?? [] })),
+      cells: current.cells.map((cell) => {
+        const field = solution.expectedFields.find((candidate) => sameLogicalPoint(candidate.witnessPoint, cell.labelPoint))
+          ?? solution.expectedFields.find((candidate) => pointInPolygon(candidate.witnessPoint, cell.polygon));
+        return { ...cell, phaseOrder: field ? expectedLabels(field) : [] };
+      }),
       revealed: true,
       solved: false,
     }));
@@ -369,7 +374,7 @@ export function App() {
               onPlacePoint={(roleId, value) => commit((current) => placeOrMovePoint(current, roleId, value))}
               onAddGeometry={(value) => commit((current) => addGeometry(current, value))}
               onUpdateGeometry={(value) => commit((current) => updateGeometry(current, value))}
-              onTogglePhaseInCell={(cellId, phaseId) => commit((current) => togglePhaseInCell(current, cellId, phaseId, puzzle.phases.map((phase) => phase.id)))}
+              onTogglePhaseInCell={(cellId, phaseId) => commit((current) => togglePhaseInCell(current, cellId, phaseId, puzzle.diagramLabels.map((label) => label.id)))}
               onRemovePhaseFromCell={(cellId, phaseId) => commit((current) => removePhaseFromCell(current, cellId, phaseId))}
               onDeleteGeometry={(geometryId) => commit((current) => deleteGeometry(current, geometryId))}
               onDeletePoint={(pointId) => commit((current) => deletePoint(current, pointId))}
@@ -401,7 +406,7 @@ export function App() {
         {!state.solved && !state.revealed && (
           <footer className="minimal-control-rail">
             <button className="icon-action" type="button" aria-label="Undo" disabled={history.current.length === 0} onClick={undo}>↶</button>
-            <PhasePalette phases={puzzle.phases} activePhaseId={state.activePhaseId} onSelect={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))} onPointerStart={() => undefined} />
+            <PhasePalette phases={puzzle.diagramLabels} activePhaseId={state.activePhaseId} onSelect={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))} onPointerStart={() => undefined} />
             <button className={`erase-action ${state.activeTool === "erase" ? "is-active" : ""}`} type="button" aria-label="Erase labels" aria-pressed={state.activeTool === "erase"} onClick={() => updateTransient((current) => setTool(current, current.activeTool === "erase" ? "label" : "erase"))}>⌫</button>
             <button className="submit-action" type="button" aria-label="Submit labels" onClick={handleSubmit}>✓</button>
           </footer>

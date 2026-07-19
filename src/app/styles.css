@@ -151,6 +151,10 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .field-texture, .stability-overlay { pointer-events: none; }
 .field-texture.texture-partial-solubility { fill: url(#partial-solubility-hatch); opacity: .65; }
 #partial-solubility-hatch line { stroke: #7d858b; stroke-width: 1.1; opacity: .34; }
+.field-texture.texture-complete-solid-solution { fill: url(#complete-solid-solution-hatch); opacity: .62; }
+#complete-solid-solution-hatch line { stroke: #8d9499; stroke-width: 1; stroke-dasharray: 5 4; opacity: .34; }
+.field-texture.texture-ordered-solid-solution { fill: url(#ordered-solid-solution-hatch); opacity: .62; }
+#ordered-solid-solution-hatch line { stroke: #8d9499; stroke-width: .9; opacity: .3; }
 .stability-overlay.spinodal-unstable-overlay { fill: url(#unstable-spinodal-hatch); opacity: .8; }
 #unstable-spinodal-hatch line { stroke: #929aa0; stroke-width: 1.2; opacity: .42; }
 .geometry-line {

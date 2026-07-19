@@ -15,6 +15,11 @@ export const goldenPuzzle: PuzzleDefinition = {
     { id: "alpha", symbol: "α", name: "Alpha", kind: "terminal-solid", required: true },
     { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
   ],
+  diagramLabels: [
+    { id: "L", symbol: "L", name: "Liquid", phaseIds: ["L"], scope: "global-phase", colorPhaseId: "L" },
+    { id: "alpha", symbol: "α", name: "Alpha", phaseIds: ["alpha"], scope: "global-phase", colorPhaseId: "alpha" },
+    { id: "beta", symbol: "β", name: "Beta", phaseIds: ["beta"], scope: "global-phase", colorPhaseId: "beta" },
+  ],
   pointRoles: [
     { id: "a-melt", symbol: "Aₘ", constraint: { kind: "left-edge" }, required: true, instructionLabel: "A 1000°" },
     { id: "b-melt", symbol: "Bₘ", constraint: { kind: "right-edge" }, required: true, instructionLabel: "B 850°" },

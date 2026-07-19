@@ -1,4 +1,4 @@
-import type { PhaseDefinition, PointRoleDefinition, ToolId } from "../domain/schema";
+import type { DiagramLabelDefinition, PointRoleDefinition, ToolId } from "../domain/schema";
 
 const tools: Array<{ id: ToolId; glyph: string; label: string }> = [
   { id: "point", glyph: "●", label: "Point" },
@@ -38,12 +38,12 @@ export function PointPalette({ roles, placedRoleIds, activeRoleId, onSelect, onP
 }
 
 export function PhasePalette({ phases, activePhaseId, onSelect, onPointerStart, onPointerMove, onPointerEnd }: {
-  phases: PhaseDefinition[];
+  phases: DiagramLabelDefinition[];
   activePhaseId?: string;
   onSelect: (phaseId: string) => void;
   onPointerStart: (event: React.PointerEvent<HTMLButtonElement>, phaseId: string) => void;
   onPointerMove?: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onPointerEnd?: (event: React.PointerEvent<HTMLButtonElement>) => void;
 }) {
-  return <div className="symbol-palette phase-palette" role="toolbar" aria-label="Phase symbols">{phases.map((phase) => <button key={phase.id} type="button" className={`phase-${phase.id} ${activePhaseId === phase.id ? "is-active" : ""}`} aria-label={`${phase.name} phase`} aria-pressed={activePhaseId === phase.id} onClick={() => onSelect(phase.id)} onPointerDown={(event) => onPointerStart(event, phase.id)} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}>{phase.symbol}</button>)}</div>;
+  return <div className="symbol-palette phase-palette" role="toolbar" aria-label="Phase symbols">{phases.map((phase) => <button key={phase.id} type="button" className={`phase-${phase.colorPhaseId} ${activePhaseId === phase.id ? "is-active" : ""}`} aria-label={`${phase.name} phase`} aria-pressed={activePhaseId === phase.id} onClick={() => onSelect(phase.id)} onPointerDown={(event) => onPointerStart(event, phase.id)} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}>{phase.symbol}</button>)}</div>;
 }
