@@ -224,6 +224,6 @@ export function ConceptDiagram({ kind, compact = false }: { kind: ConceptDiagram
     </>,
   };
   return <svg className={`concept-diagram ${compact ? "is-compact" : ""}`} viewBox="0 0 160 110" role={compact ? undefined : "img"} aria-label={compact ? undefined : "Schematic phase diagram"} aria-hidden={compact || undefined}>
-    <path className="axes" d={base}/>{paths[kind]}<text className="axis-a" x="12" y="106">A</text><text className="axis-b" x="141" y="106">B</text>
+    <g className="ink"><path className="axes" d={base}/>{paths[kind]}<text className="axis-a" x="12" y="106">A</text><text className="axis-b" x="141" y="106">B</text></g>
   </svg>;
 }
