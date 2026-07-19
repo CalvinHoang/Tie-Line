@@ -56,11 +56,16 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 }
 .top-left-actions { display: flex; align-items: center; gap: 2px; }
 .top-rail > .status-cluster { position: absolute; left: 50%; margin: 0; transform: translateX(-50%); }
-.top-rail > .reset-view-action { margin-left: auto; }
+.top-rail > .viewport-actions { margin-left: auto; }
 .back-action,
-.reset-view-action { width: 42px; height: 42px; border: 0; border-radius: 50%; color: var(--muted); background: transparent; cursor: pointer; font-size: 26px; }
-.back-action:hover,
-.reset-view-action:hover { color: var(--ink); background: var(--raised); }
+.reset-view-action { height: 42px; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
+.back-action { width: 42px; border-radius: 50%; font-size: 26px; }
+.back-action:hover { color: var(--ink); background: var(--raised); }
+.viewport-actions { display: flex; align-items: center; padding: 2px; border: 1px solid var(--hairline); border-radius: 14px; background: rgb(34 39 45 / 78%); }
+.viewport-actions button { min-width: 38px; height: 38px; padding: 0; border: 0; border-radius: 11px; color: var(--muted); background: transparent; cursor: pointer; font-size: 21px; line-height: 1; }
+.viewport-actions .reset-view-action { min-width: 48px; font-size: 10px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.viewport-actions button:hover:not(:disabled) { color: var(--ink); background: var(--raised); }
+.viewport-actions button:disabled { opacity: .28; cursor: default; }
 .instruction-strip { min-width: 0; flex: 1; display: flex; align-items: center; gap: 9px; }
 .instruction-strip.is-collapsed { flex: 0 0 auto; }
 .instruction-toggle,
@@ -127,6 +132,8 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
   -webkit-user-select: none;
   overscroll-behavior: none;
 }
+.diagram-canvas.is-panning,
+.diagram-canvas.is-panning .field-target { cursor: grabbing; }
 .result-sheet { position: absolute; left: 50%; bottom: 28px; z-index: 9; width: min(calc(100% - 24px), 430px); padding: 22px; transform: translateX(-50%); border: 1px solid var(--hairline); border-radius: 22px; background: rgb(25 29 34 / 96%); box-shadow: var(--shadow); backdrop-filter: blur(16px); animation: completion-in 420ms var(--spring) both; }
 .result-sheet h2 { margin: 7px 0 16px; font-size: 25px; letter-spacing: -.035em; }
 .result-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }

@@ -301,8 +301,12 @@ export function derivePhaseIdentity(
     domainGroups.set(phase.domainKey, [...(domainGroups.get(phase.domainKey) ?? []), phase]);
   });
 
+  const hasTerminalDomains = [...domainGroups.values()].some((group) =>
+    group[0].compositionRole === "a-terminal" || group[0].compositionRole === "b-terminal");
   const intermediateDomains = [...domainGroups.entries()]
-    .filter(([, group]) => group[0].compositionRole === "intermediate" || group[0].compositionRole === "fixed-composition")
+    .filter(([, group]) => group[0].compositionRole === "intermediate"
+      || group[0].compositionRole === "fixed-composition"
+      || (hasTerminalDomains && group[0].compositionRole === "complete-range"))
     .sort(([, a], [, b]) => a[0].facts.compositionCentroidBPercent - b[0].facts.compositionCentroidBPercent);
   const intermediateBaseSymbol = new Map(intermediateDomains.map(([key], index) => [key, INTERMEDIATE_SYMBOLS[index]]));
   if (intermediateDomains.length > INTERMEDIATE_SYMBOLS.length) {
@@ -312,15 +316,15 @@ export function derivePhaseIdentity(
   for (const [domain, group] of domainGroups) {
     const role = group[0].compositionRole;
     const baseSymbol = role === "a-terminal" ? "α" : role === "b-terminal" ? "β"
-      : role === "complete-range" ? "α" : intermediateBaseSymbol.get(domain)!;
+      : role === "complete-range" && !hasTerminalDomains ? "α" : intermediateBaseSymbol.get(domain)!;
     if (role === "complete-range" && group.length === 2) {
       const low = group.find((phase) => phase.facts.temperatureRole === "low-temperature");
       const high = group.find((phase) => phase.facts.temperatureRole === "high-temperature");
       if (!low || !high || low.familyId !== high.familyId) {
         throw new PhaseIdentityError([issue("ambiguous-complete-range-variants", group.map((phase) => phase.semantic.sourceKey), "Two complete-range phases must be low/high polymorphs of one family.")]);
       }
-      low.symbol = "α";
-      high.symbol = "β";
+      low.symbol = baseSymbol;
+      high.symbol = hasTerminalDomains ? prime(baseSymbol) : "β";
       continue;
     }
     if (group.length > 1) {

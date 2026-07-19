@@ -43,6 +43,6 @@ The Playwright command requires its Chromium runtime (`npx playwright install ch
 - solve, no-error, and best-time statistics separated into Easy, Normal, and Hard, plus recent history and a daily streak;
 - a blocking end-of-attempt choice screen with Continue, Reveal, New, and Menu, followed by an unobstructed diagram review when the solution is shown;
 - first-run onboarding plus dark/light/system themes, reduced motion, and left-handed controls;
-- 320 px mobile layout, pinch zoom/two-finger pan, cursor-anchored wheel zoom for narrow Hard fields, accessible controls, and high contrast.
+- 320 px mobile layout, one-finger drag pan with tap/drag disambiguation, pinch zoom, cursor-anchored wheel zoom and accessible zoom controls for narrow Hard fields, plus high contrast.
 
 Ternary gameplay remains out of scope because the source handoff marks its grammar and validation rules as non-binding. Accounts, a backend, multiplayer, and leaderboards are also intentionally out of scope.

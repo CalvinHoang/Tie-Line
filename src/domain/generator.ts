@@ -200,7 +200,7 @@ const phases = (compound = false): PhaseDefinition[] => [
   { id: "beta", symbol: "β", name: "Beta", kind: "terminal-solid", required: true },
 ];
 
-const GREEK_INTERMEDIATE_SYMBOLS = ["γ", "δ", "ε", "ζ", "η", "θ", "κ", "λ"] as const;
+const GREEK_INTERMEDIATE_SYMBOLS = ["γ", "δ", "ε", "ζ", "η", "θ", "ι", "κ", "λ", "μ", "ν", "ξ", "ο"] as const;
 const SUBSCRIPT_DIGITS: Record<string, string> = { "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉" };
 
 function formulaTerms(formula: string): Array<{ element: string; count: number }> {
@@ -237,7 +237,6 @@ export function intermediateFormula(leftFormula: string, rightFormula: string, i
 }
 
 function intermediateRules(
-  seed: number,
   solution: HiddenSolution,
   inventory: PhaseDefinition[],
   endMemberLabels: PuzzleDefinition["endMemberLabels"],
@@ -267,7 +266,7 @@ function intermediateRules(
     }
     return undefined;
   };
-  const groups = [...groupedPhases].map(([id, groupPhases]) => {
+  const fixedGroups = [...groupedPhases].map(([id, groupPhases]) => {
     const siteCurve = solution.curves.find((curve) => curve.compositionSiteId === id);
     const siteCurveComposition = siteCurve ? pointByRole.get(siteCurve.startRoleId)?.compositionBPercent : undefined;
     const compositions = [...new Set(groupPhases.map((phase) => siteCurveComposition ?? phase.fixedCompositionBPercent ?? inferredComposition(phase.id)))];
@@ -276,23 +275,44 @@ function intermediateRules(
     return { id, phases: groupPhases, compositionBPercent };
   }).sort((a, b) => a.compositionBPercent - b.compositionBPercent);
 
-  const greekOffset = seed % GREEK_INTERMEDIATE_SYMBOLS.length;
-  const intermediateCompositions = groups.map((group, index) => ({
+  const intermediateCompositions = fixedGroups.map((group, index) => ({
     id: group.id,
-    label: intermediateFormula(endMemberLabels.left, endMemberLabels.right, index, groups.length),
+    label: intermediateFormula(endMemberLabels.left, endMemberLabels.right, index, fixedGroups.length),
     compositionBPercent: group.compositionBPercent,
     phaseIds: group.phases.map((phase) => phase.id),
   }));
   const compositionByPhase = new Map(intermediateCompositions.flatMap((composition) => composition.phaseIds.map((phaseId) => [phaseId, composition] as const)));
+  const fixedPhaseIds = new Set(compositionByPhase.keys());
+  const flexibleIntermediateSites = inventory
+    .filter((phase) => !fixedPhaseIds.has(phase.id)
+      && (phase.kind === "intermediate-solid-solution" || phase.compositionRole === "intermediate"))
+    .map((phase) => {
+      const singlePhaseField = solution.expectedFields.find((field) => field.expectedAssemblage.length === 1
+        && field.expectedAssemblage[0] === phase.id);
+      const compositionBPercent = phase.fixedCompositionBPercent
+        ?? inferredComposition(phase.id)
+        ?? singlePhaseField?.witnessPoint.compositionBPercent;
+      if (compositionBPercent === undefined) throw new Error(`${solution.puzzleId} cannot position intermediate phase ${phase.id} for notation.`);
+      return { id: phase.id, phases: [phase], compositionBPercent };
+    });
+  const notationSites = [...fixedGroups, ...flexibleIntermediateSites]
+    .sort((a, b) => a.compositionBPercent - b.compositionBPercent || a.id.localeCompare(b.id));
+  if (notationSites.length > GREEK_INTERMEDIATE_SYMBOLS.length) {
+    throw new Error(`${solution.puzzleId} exhausted the intermediate Greek symbol sequence.`);
+  }
+  const symbolByPhase = new Map<string, string>();
+  notationSites.forEach((site, siteIndex) => {
+    const baseSymbol = GREEK_INTERMEDIATE_SYMBOLS[siteIndex];
+    site.phases.forEach((phase, variantIndex) => symbolByPhase.set(phase.id, `${baseSymbol}${"′".repeat(variantIndex)}`));
+  });
   const phasesWithRules = inventory.map((phase) => {
     const composition = compositionByPhase.get(phase.id);
-    if (!composition) return phase;
-    const groupIndex = intermediateCompositions.findIndex((candidate) => candidate.id === composition.id);
+    const symbol = symbolByPhase.get(phase.id);
+    if (!composition) return symbol ? { ...phase, symbol } : phase;
     const variantIndex = composition.phaseIds.indexOf(phase.id);
-    const baseSymbol = GREEK_INTERMEDIATE_SYMBOLS[(greekOffset + groupIndex) % GREEK_INTERMEDIATE_SYMBOLS.length];
     return {
       ...phase,
-      symbol: `${baseSymbol}${"′".repeat(variantIndex)}`,
+      symbol: symbol!,
       name: variantIndex === 0 ? `${composition.label} intermediate` : `${composition.label} intermediate polymorph ${variantIndex + 1}`,
       compositionSiteId: composition.id,
       fixedCompositionBPercent: composition.compositionBPercent,
@@ -340,7 +360,7 @@ function puzzleFrom(
     }
   });
   const compound = solution.points.some((item) => item.roleId === "gamma" || item.roleId.startsWith("gamma-"));
-  const ruledInventory = intermediateRules(seed, solution, phaseInventory ?? phases(compound), endMemberLabels);
+  const ruledInventory = intermediateRules(solution, phaseInventory ?? phases(compound), endMemberLabels);
   return {
     schemaVersion: "tie-line-labels-3",
     id: solution.puzzleId,
@@ -374,7 +394,7 @@ function puzzleFrom(
     instructions: [
       { id: "instruction-fields", compactText: `Label all ${solution.expectedFields.length} phase fields` },
       { id: "instruction-mode", compactText: `${difficulty[0].toUpperCase()}${difficulty.slice(1)} · Seed ${seed}` },
-      ...(solution.expectedFields.length >= 16 ? [{ id: "instruction-zoom", compactText: "Pinch or wheel to inspect narrow fields" }] : []),
+      ...(solution.expectedFields.length >= 16 ? [{ id: "instruction-zoom", compactText: "Drag to pan; pinch, wheel, or +/− to zoom" }] : []),
     ],
     permittedTools: ["label", "erase"],
     requiredCurves: solution.curves.map((curve) => ({
@@ -2046,16 +2066,30 @@ function generateRuleComposedRound(seed: number, difficulty: "normal" | "hard"):
     const adapted = applyDiagramNotation(candidate.puzzle, candidate.solution);
     const inferred = inferPhaseIdentityInputs(adapted.puzzle, adapted.solution).inferredFacts;
     const phaseKindById = new Map(adapted.puzzle.phases.map((phase) => [phase.id, phase.kind]));
+    const familyCounts = new Map<string, number>();
+    adapted.puzzle.phases.forEach((phase) => {
+      if (phase.phaseFamilyId) familyCounts.set(phase.phaseFamilyId, (familyCounts.get(phase.phaseFamilyId) ?? 0) + 1);
+    });
+    const preservesVariantNotation = new Set(adapted.puzzle.phases.filter((phase) => phase.temperatureRole
+      || (phase.phaseFamilyId && (familyCounts.get(phase.phaseFamilyId) ?? 0) > 1)).map((phase) => phase.id));
     const terminalNameById = new Map(inferred.flatMap((fact) => fact.touchesA !== fact.touchesB
       && phaseKindById.get(fact.sourceKey) !== "liquid"
       ? [[fact.sourceKey, fact.touchesA ? "A-rich" : "B-rich"] as const]
       : []));
-    const namedPuzzle: PuzzleDefinition = {
+    const terminalSymbolById = new Map(inferred.flatMap((fact) => fact.touchesA !== fact.touchesB
+      && phaseKindById.get(fact.sourceKey) !== "liquid" && !preservesVariantNotation.has(fact.sourceKey)
+      ? [[fact.sourceKey, fact.touchesA ? "α" : "β"] as const]
+      : []));
+    const identityPuzzle: PuzzleDefinition = {
       ...adapted.puzzle,
-      phases: adapted.puzzle.phases.map((phase) => ({ ...phase, name: terminalNameById.get(phase.id) ?? phase.name })),
-      diagramLabels: adapted.puzzle.diagramLabels.map((label) => ({ ...label, name: terminalNameById.get(label.colorPhaseId) ?? label.name })),
+      phases: adapted.puzzle.phases.map((phase) => ({
+        ...phase,
+        name: terminalNameById.get(phase.id) ?? phase.name,
+        symbol: terminalSymbolById.get(phase.id) ?? phase.symbol,
+      })),
     };
-    const normalizedCandidate = { ...candidate, puzzle: namedPuzzle, solution: adapted.solution };
+    const notated = applyDiagramNotation(identityPuzzle, candidate.solution);
+    const normalizedCandidate = { ...candidate, puzzle: notated.puzzle, solution: notated.solution };
     const audit = auditPhaseEquilibria(normalizedCandidate.puzzle, normalizedCandidate.solution);
     if (audit.valid) return { ...normalizedCandidate, featuredFeature };
     lastViolations = audit.violations.map((violation) => `${violation.ruleId}[${violation.elementIds.join("|")}]: ${violation.message}`).join(", ");

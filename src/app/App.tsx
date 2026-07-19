@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DiagramCanvas } from "../canvas/DiagramCanvas";
+import { DiagramCanvas, maximumViewportScale, zoomViewportAt } from "../canvas/DiagramCanvas";
 import { createPuzzleSeed, generateRound, type Difficulty, type GeneratedRound } from "../domain/generator";
 import { pointInPolygon, sameLogicalPoint } from "../domain/geometry";
 import { expectedLabels } from "../domain/diagram-notation";
@@ -235,6 +235,15 @@ export function App() {
   }, []);
 
   const updateTransient = useCallback((update: (current: ConstructionState) => ConstructionState) => setState(update), []);
+  const changeZoom = (factor: number) => updateTransient((current) => ({
+    ...current,
+    viewport: zoomViewportAt(
+      current.viewport,
+      current.viewport.scale * factor,
+      undefined,
+      maximumViewportScale(puzzle.expectedFieldCount),
+    ),
+  }));
   const updateProfile = (update: (current: PlayerProfile) => PlayerProfile) => setProfile((current) => update(current));
   const addRecord = (record: SolveRecord) => updateProfile((current) => current.history.some((item) => item.puzzleId === record.puzzleId)
     ? current
@@ -417,7 +426,11 @@ export function App() {
             <time aria-label={`Elapsed time ${elapsed}`}>{elapsed}</time>
             <div className="attempts" aria-label={`${state.metrics.submissionsRemaining} submissions remaining`}>{[0, 1, 2].map((index) => <span key={index} className={`${index < state.metrics.submissionsRemaining ? "is-available" : ""} ${state.metrics.submitCount > 0 && index === state.metrics.submissionsRemaining ? "is-spent" : ""}`} />)}</div>
           </div>
-          <button className="reset-view-action" type="button" aria-label="Reset view" onClick={() => updateTransient((current) => ({ ...current, viewport: { scale: 1, translateX: 0, translateY: 0 } }))}>⌾</button>
+          <div className="viewport-actions" role="group" aria-label="View controls">
+            <button type="button" aria-label="Zoom out" disabled={state.viewport.scale <= 1.001} onClick={() => changeZoom(1 / 1.35)}>−</button>
+            <button className="reset-view-action" type="button" aria-label="Reset view" title="Reset view" onClick={() => updateTransient((current) => ({ ...current, viewport: { scale: 1, translateX: 0, translateY: 0 } }))}>{Math.round(state.viewport.scale * 100)}%</button>
+            <button type="button" aria-label="Zoom in" disabled={state.viewport.scale >= maximumViewportScale(puzzle.expectedFieldCount) - .001} onClick={() => changeZoom(1.35)}>+</button>
+          </div>
         </header>
 
         <section className="board-region">

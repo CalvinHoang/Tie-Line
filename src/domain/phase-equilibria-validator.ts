@@ -183,6 +183,14 @@ function auditPhaseModels(
   violations: EquilibriumViolation[],
 ): void {
   const legacyComposed = puzzle.id.includes("rule-composed") || puzzle.id.includes("composable-");
+  const symbolOwners = new Map<string, string[]>();
+  puzzle.phases.filter((phase) => phase.kind === "line-compound" || phase.kind === "intermediate-solid-solution")
+    .forEach((phase) => symbolOwners.set(phase.symbol, [...(symbolOwners.get(phase.symbol) ?? []), phase.id]));
+  for (const [symbol, phaseIds] of symbolOwners) {
+    if (phaseIds.length > 1) {
+      add(violations, "intermediate-phase-symbol-unique", "phase-model", `Intermediate symbol ${symbol} is assigned to unrelated phases ${phaseIds.join(", ")}.`, phaseIds);
+    }
+  }
   for (const phase of puzzle.phases) {
     const singlePhaseCells = cells.filter((cell) => fieldForCell(cell, solution)?.expectedAssemblage.length === 1
       && fieldForCell(cell, solution)?.expectedAssemblage[0] === phase.id);

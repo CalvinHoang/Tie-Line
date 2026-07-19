@@ -446,6 +446,10 @@ describe("procedural phase-diagram generator", () => {
         const { family, puzzle, solution } = generateRound(seed, difficulty);
         const defined = new Set(puzzle.phases.map((phase) => phase.id));
         expect(defined.size, `${difficulty} seed ${seed} ${family} duplicate phase ids`).toBe(puzzle.phases.length);
+        const intermediateSymbols = puzzle.phases
+          .filter((phase) => phase.kind === "line-compound" || phase.kind === "intermediate-solid-solution")
+          .map((phase) => phase.symbol);
+        expect(new Set(intermediateSymbols).size, `${difficulty} seed ${seed} ${family} duplicate intermediate symbols`).toBe(intermediateSymbols.length);
         const referenced = [
           ...solution.expectedFields.flatMap((field) => field.expectedAssemblage),
           ...solution.invariants.flatMap((invariant) => invariant.expectedAssemblage),
@@ -461,6 +465,10 @@ describe("procedural phase-diagram generator", () => {
       kind: "line-compound",
       compositionSiteId: "gamma",
     });
+
+    const eutectoid = generateRound(6, "easy");
+    expect(eutectoid.puzzle.phases.find((phase) => phase.id === "gamma")?.symbol).toBe("γ");
+    expect(eutectoid.puzzle.phases.map((phase) => phase.symbol)).toEqual(["L", "α", "γ", "β"]);
   });
 
   it("derives intermediate formulas and keeps every phase variant aligned to its composition rule", () => {

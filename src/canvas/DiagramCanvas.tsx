@@ -20,6 +20,49 @@ type Gesture =
   | { kind: "handle"; geometryId: string; preview: LogicalPoint }
   | undefined;
 
+interface PointerPosition { x: number; y: number }
+
+interface PendingFieldTap {
+  targetId: string;
+  phaseId: PhaseId;
+  removing: boolean;
+  client: PointerPosition;
+}
+
+const MIN_VIEWPORT_SCALE = 1;
+const PAN_THRESHOLD_PX = 7;
+
+export function maximumViewportScale(expectedFieldCount: number): number {
+  return expectedFieldCount >= 16 ? 6 : 3;
+}
+
+export function constrainViewport(viewport: ViewportState, maximumScale: number): ViewportState {
+  const scale = Math.min(maximumScale, Math.max(MIN_VIEWPORT_SCALE, viewport.scale));
+  return {
+    scale,
+    translateX: Math.min(0, Math.max(VIEWBOX.width * (1 - scale), viewport.translateX)),
+    translateY: Math.min(0, Math.max(VIEWBOX.height * (1 - scale), viewport.translateY)),
+  };
+}
+
+export function zoomViewportAt(
+  viewport: ViewportState,
+  scale: number,
+  anchor: PointerPosition = { x: VIEWBOX.width / 2, y: VIEWBOX.height / 2 },
+  maximumScale = 3,
+): ViewportState {
+  const nextScale = Math.min(maximumScale, Math.max(MIN_VIEWPORT_SCALE, scale));
+  const world = {
+    x: (anchor.x - viewport.translateX) / viewport.scale,
+    y: (anchor.y - viewport.translateY) / viewport.scale,
+  };
+  return constrainViewport({
+    scale: nextScale,
+    translateX: anchor.x - world.x * nextScale,
+    translateY: anchor.y - world.y * nextScale,
+  }, maximumScale);
+}
+
 interface DiagramCanvasProps {
   state: ConstructionState;
   puzzle: PuzzleDefinition;
@@ -56,11 +99,14 @@ function nearestPoint(target: LogicalPoint, points: PlayerPoint[], radius = 4): 
 export function DiagramCanvas(props: DiagramCanvasProps) {
   const { state, puzzle } = props;
   const editingDisabled = state.solved || state.revealed || props.interactionDisabled;
-  const maxViewportScale = puzzle.expectedFieldCount >= 16 ? 6 : 3;
+  const maxViewportScale = maximumViewportScale(puzzle.expectedFieldCount);
   const svgRef = useRef<SVGSVGElement>(null);
   const [gesture, setGesture] = useState<Gesture>();
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const pinch = useRef<{ distance: number; center: { x: number; y: number }; viewport: ViewportState } | undefined>(undefined);
+  const pointers = useRef(new Map<number, PointerPosition>());
+  const pendingFieldTaps = useRef(new Map<number, PendingFieldTap>());
+  const pan = useRef<{ pointerId: number; start: PointerPosition; viewport: ViewportState; moved: boolean } | undefined>(undefined);
+  const pinch = useRef<{ distance: number; world: PointerPosition; viewport: ViewportState } | undefined>(undefined);
+  const [isPanning, setIsPanning] = useState(false);
   const [targetFeedback, setTargetFeedback] = useState<{
     id: number;
     targetId: string;
@@ -77,8 +123,8 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
 
   const toLogical = (clientX: number, clientY: number): LogicalPoint => {
     const rect = svgRef.current!.getBoundingClientRect();
-    const svgX = ((clientX - rect.left) / rect.width) * VIEWBOX.width;
-    const svgY = ((clientY - rect.top) / rect.height) * VIEWBOX.height;
+    const svgX = rect.width > 0 ? ((clientX - rect.left) / rect.width) * VIEWBOX.width : VIEWBOX.width / 2;
+    const svgY = rect.height > 0 ? ((clientY - rect.top) / rect.height) * VIEWBOX.height : VIEWBOX.height / 2;
     return svgToLogical(
       (svgX - state.viewport.translateX) / state.viewport.scale,
       (svgY - state.viewport.translateY) / state.viewport.scale,
@@ -89,27 +135,51 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   const inFrame = (point: LogicalPoint) => point.compositionBPercent >= -2 && point.compositionBPercent <= 102
     && point.temperatureCelsius >= -25 && point.temperatureCelsius <= 1125;
 
-  const confirmTarget = (event: React.PointerEvent<SVGElement>, targetId: string, phaseId: PhaseId, removing: boolean) => {
+  const confirmTarget = (client: PointerPosition, targetId: string, phaseId: PhaseId, removing: boolean) => {
     setTargetFeedback((current) => ({
       id: (current?.id ?? 0) + 1,
       targetId,
-      point: toLogical(event.clientX, event.clientY),
+      point: toLogical(client.x, client.y),
       phaseId,
       removing,
     }));
   };
 
+  const clientToSvg = (client: PointerPosition): PointerPosition => {
+    const rect = svgRef.current!.getBoundingClientRect();
+    return {
+      x: rect.width > 0 ? ((client.x - rect.left) / rect.width) * VIEWBOX.width : VIEWBOX.width / 2,
+      y: rect.height > 0 ? ((client.y - rect.top) / rect.height) * VIEWBOX.height : VIEWBOX.height / 2,
+    };
+  };
+
   const pointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
-    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
+      const center = clientToSvg({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
       pinch.current = {
         distance: Math.hypot(a.x - b.x, a.y - b.y),
-        center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        world: {
+          x: (center.x - state.viewport.translateX) / state.viewport.scale,
+          y: (center.y - state.viewport.translateY) / state.viewport.scale,
+        },
         viewport: state.viewport,
       };
+      pendingFieldTaps.current.clear();
+      pan.current = undefined;
+      setIsPanning(true);
       setGesture(undefined);
+      return;
+    }
+    if (pointers.current.size === 1 && (editingDisabled || state.activeTool === "label" || state.activeTool === "erase")) {
+      pan.current = {
+        pointerId: event.pointerId,
+        start: { x: event.clientX, y: event.clientY },
+        viewport: state.viewport,
+        moved: false,
+      };
       return;
     }
     if (editingDisabled) return;
@@ -129,13 +199,31 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     if (pointers.current.size === 2 && pinch.current) {
       const [a, b] = [...pointers.current.values()];
       const nextDistance = Math.hypot(a.x - b.x, a.y - b.y);
-      const nextCenter = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      const scale = Math.min(maxViewportScale, Math.max(0.8, pinch.current.viewport.scale * (nextDistance / pinch.current.distance)));
-      props.onViewportChange({
+      const nextCenter = clientToSvg({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      const scale = pinch.current.viewport.scale * (nextDistance / pinch.current.distance);
+      props.onViewportChange(constrainViewport({
         scale,
-        translateX: pinch.current.viewport.translateX + (nextCenter.x - pinch.current.center.x) * (VIEWBOX.width / svgRef.current!.clientWidth),
-        translateY: pinch.current.viewport.translateY + (nextCenter.y - pinch.current.center.y) * (VIEWBOX.height / svgRef.current!.clientHeight),
-      });
+        translateX: nextCenter.x - pinch.current.world.x * scale,
+        translateY: nextCenter.y - pinch.current.world.y * scale,
+      }, maxViewportScale));
+      return;
+    }
+    if (pan.current?.pointerId === event.pointerId) {
+      const dx = event.clientX - pan.current.start.x;
+      const dy = event.clientY - pan.current.start.y;
+      if (!pan.current.moved && Math.hypot(dx, dy) >= PAN_THRESHOLD_PX) {
+        pan.current.moved = true;
+        pendingFieldTaps.current.delete(event.pointerId);
+        setIsPanning(true);
+      }
+      if (pan.current.moved) {
+        const rect = svgRef.current!.getBoundingClientRect();
+        props.onViewportChange(constrainViewport({
+          ...pan.current.viewport,
+          translateX: pan.current.viewport.translateX + dx * VIEWBOX.width / Math.max(1, rect.width),
+          translateY: pan.current.viewport.translateY + dy * VIEWBOX.height / Math.max(1, rect.height),
+        }, maxViewportScale));
+      }
       return;
     }
     if (!gesture) return;
@@ -161,21 +249,26 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       x: ((event.clientX - rect.left) / rect.width) * VIEWBOX.width,
       y: ((event.clientY - rect.top) / rect.height) * VIEWBOX.height,
     };
-    const nextScale = Math.min(maxViewportScale, Math.max(0.8, state.viewport.scale * Math.exp(-event.deltaY * .0015)));
-    const world = {
-      x: (cursor.x - state.viewport.translateX) / state.viewport.scale,
-      y: (cursor.y - state.viewport.translateY) / state.viewport.scale,
-    };
-    props.onViewportChange({
-      scale: nextScale,
-      translateX: cursor.x - world.x * nextScale,
-      translateY: cursor.y - world.y * nextScale,
-    });
+    props.onViewportChange(zoomViewportAt(
+      state.viewport,
+      state.viewport.scale * Math.exp(-event.deltaY * .0015),
+      cursor,
+      maxViewportScale,
+    ));
   };
 
   const pointerUp = (event: React.PointerEvent<SVGSVGElement>) => {
+    const completedPan = pan.current?.pointerId === event.pointerId ? pan.current : undefined;
+    const tap = pendingFieldTaps.current.get(event.pointerId);
+    if (tap && completedPan && !completedPan.moved && pointers.current.size === 1 && !editingDisabled) {
+      confirmTarget(tap.client, tap.targetId, tap.phaseId, tap.removing);
+      props.onTogglePhaseInCell(tap.targetId, tap.phaseId);
+    }
+    pendingFieldTaps.current.delete(event.pointerId);
     pointers.current.delete(event.pointerId);
     if (pointers.current.size < 2) pinch.current = undefined;
+    if (completedPan) pan.current = undefined;
+    if (pointers.current.size === 0) setIsPanning(false);
     if (!gesture) return;
     if (gesture.kind === "point") {
       props.onPlacePoint(gesture.roleId, gesture.preview);
@@ -242,6 +335,15 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     setGesture(undefined);
   };
 
+  const pointerCancel = (event: React.PointerEvent<SVGSVGElement>) => {
+    pendingFieldTaps.current.delete(event.pointerId);
+    pointers.current.delete(event.pointerId);
+    pan.current = undefined;
+    pinch.current = undefined;
+    setGesture(undefined);
+    setIsPanning(false);
+  };
+
   const curvePaths = useMemo(() => state.geometry.filter((item): item is QuadraticCurveGeometry => item.type === "curve").map((curve) => {
     const start = state.points.find((point) => point.id === curve.startPointId)?.point;
     const end = state.points.find((point) => point.id === curve.endPointId)?.point;
@@ -294,7 +396,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     <svg
       id="tie-line-board"
       ref={svgRef}
-      className="diagram-canvas"
+      className={`diagram-canvas ${isPanning ? "is-panning" : ""}`}
       viewBox={`0 0 ${VIEWBOX.width} ${VIEWBOX.height}`}
       preserveAspectRatio="xMidYMid meet"
       role="application"
@@ -302,7 +404,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       onPointerDown={pointerDown}
       onPointerMove={pointerMove}
       onPointerUp={pointerUp}
-      onPointerCancel={pointerUp}
+      onPointerCancel={pointerCancel}
       onWheel={wheelZoom}
     >
       <defs>
@@ -353,10 +455,13 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
           const phaseClasses = cell.phaseOrder.map((phase) => `field-${phaseColorId(puzzle, phase)}`).join(" ");
           return <path key={cell.id} className={`field-target ${cell.phaseOrder.length > 0 ? "is-labelled" : ""} ${targetFeedback?.targetId === cell.id ? "is-confirmed" : ""} ${phaseClasses}`} d={d} onPointerDown={(event) => {
             if (state.activeTool !== "label" || !state.activePhaseId || editingDisabled) return;
-            event.stopPropagation();
             const phaseId = state.activePhaseId;
-            confirmTarget(event, cell.id, phaseId, cell.phaseOrder.includes(phaseId));
-            props.onTogglePhaseInCell(cell.id, phaseId);
+            pendingFieldTaps.current.set(event.pointerId, {
+              targetId: cell.id,
+              phaseId,
+              removing: cell.phaseOrder.includes(phaseId),
+              client: { x: event.clientX, y: event.clientY },
+            });
           }} />;
         })}
 

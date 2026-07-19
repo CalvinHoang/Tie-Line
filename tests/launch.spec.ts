@@ -85,6 +85,27 @@ test("opens a complete generated diagram ready for labels", async ({ page }) => 
   await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");
 });
 
+test("zooms with controls and pans with a one-pointer drag without placing a label", async ({ page }) => {
+  await startGame(page);
+  const board = page.getByRole("application", { name: /phase diagram board/i });
+  const ink = board.locator(".ink-plate");
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(ink).toHaveAttribute("transform", /scale\(1\.35\)/);
+  const beforePan = await ink.getAttribute("transform");
+  const box = await board.boundingBox();
+  if (!box) throw new Error("Generated board is unavailable");
+
+  await page.mouse.move(box.x + box.width * .55, box.y + box.height * .5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * .35, box.y + box.height * .5, { steps: 6 });
+  await page.mouse.up();
+
+  expect(await ink.getAttribute("transform")).not.toBe(beforePan);
+  await expect(board.locator(".phase-label")).toHaveCount(0);
+  await page.getByRole("button", { name: "Reset view" }).click();
+  await expect(ink).toHaveAttribute("transform", "translate(0 0) scale(1)");
+});
+
 test("links intermediate compositions to their phase symbols on the bottom axis", async ({ page }) => {
   await forceGeneratedSeed(page, 0);
   await page.evaluate(() => {
