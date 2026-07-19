@@ -70,6 +70,10 @@ export interface PhaseDefinition {
   /** Fixed stoichiometric site. Only phases at this exact composition share it. */
   compositionSiteId?: string;
   fixedCompositionBPercent?: number;
+  /** How an intermediate phase terminates on heating in the generated topology. */
+  intermediateThermalMode?: "congruent" | "incongruent" | "eutectoid" | "peritectoid";
+  /** True only when the topology contains a finite-width single-phase field. */
+  partialSolubility?: boolean;
 }
 
 export interface IntermediateCompositionDefinition {

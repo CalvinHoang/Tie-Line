@@ -316,6 +316,32 @@ function auditPhaseModels(
       add(violations, "line-compound-fixed-composition", "phase-model", `${composition.id} phases must explicitly share its one stoichiometric composition.`);
     }
   }
+
+  for (const phase of puzzle.phases.filter((candidate) => candidate.intermediateThermalMode)) {
+    const mode = phase.intermediateThermalMode!;
+    const expectedReaction = mode === "incongruent" ? "peritectic" : mode;
+    const matchingInvariant = solution.invariants.find((invariant) =>
+      invariant.reactionType === expectedReaction && invariant.expectedAssemblage.includes(phase.id));
+    if (mode === "congruent" && !solution.points.some((item) => item.roleId === `${phase.id}-peak-composed`)) {
+      add(violations, "congruent-intermediate-peak", "phase-model", `${phase.id} must terminate at its own liquidus peak.`, [phase.id]);
+    }
+    if (mode === "incongruent" && (!matchingInvariant || !matchingInvariant.productPhaseIds?.includes(phase.id))) {
+      add(violations, "incongruent-intermediate-peritectic", "reaction", `${phase.id} must terminate as the solid product of a peritectic.`, [phase.id]);
+    }
+    if (mode === "eutectoid" || mode === "peritectoid") {
+      if (!matchingInvariant || matchingInvariant.expectedAssemblage.some((phaseId) => phaseById.get(phaseId)?.kind === "liquid")) {
+        add(violations, "subsolidus-intermediate-invariant", "reaction", `${phase.id} must be realized by its liquid-free ${mode} invariant.`, [phase.id]);
+      }
+    }
+    const finitePartialField = solution.expectedFields.some((field) => field.expectedAssemblage.length === 1
+      && field.expectedAssemblage[0] === phase.id && field.texture === "partial-solubility");
+    if (phase.partialSolubility && (phase.kind !== "intermediate-solid-solution" || !finitePartialField)) {
+      add(violations, "intermediate-partial-solubility-field", "phase-model", `${phase.id} is marked partially soluble but has no finite-width single-phase field.`, [phase.id]);
+    }
+    if (phase.partialSolubility === false && phase.kind !== "line-compound") {
+      add(violations, "intermediate-fixed-composition-kind", "phase-model", `${phase.id} is fixed-composition and must remain a line compound.`, [phase.id]);
+    }
+  }
 }
 
 function auditSpinodal(

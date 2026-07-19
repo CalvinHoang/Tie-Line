@@ -406,7 +406,13 @@ export function App() {
         </section>
       ) : <>
         <header className="top-rail">
-          <button className="back-action" type="button" aria-label="Main menu" onClick={goHome}>‹</button>
+          <div className="top-left-actions">
+            <button className="back-action" type="button" aria-label="Main menu" onClick={goHome}>‹</button>
+            {!state.solved && !state.revealed && !failureOpen && <>
+              <button className="clear-all-action" type="button" aria-label="Clear all labels" disabled={!state.cells.some((cell) => cell.phaseOrder.length > 0)} onClick={() => { commit(clearPhaseLabels); announce("All labels cleared"); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 11h10M9 15h6"/><path d="M5 19 19 5"/></svg></button>
+              <button className={`erase-action ${state.activeTool === "erase" ? "is-active" : ""}`} type="button" aria-label="Erase labels" aria-pressed={state.activeTool === "erase"} onClick={() => updateTransient((current) => setTool(current, current.activeTool === "erase" ? "label" : "erase"))}>⌫</button>
+            </>}
+          </div>
           <div className="status-cluster" aria-label="Puzzle status">
             <time aria-label={`Elapsed time ${elapsed}`}>{elapsed}</time>
             <div className="attempts" aria-label={`${state.metrics.submissionsRemaining} submissions remaining`}>{[0, 1, 2].map((index) => <span key={index} className={`${index < state.metrics.submissionsRemaining ? "is-available" : ""} ${state.metrics.submitCount > 0 && index === state.metrics.submissionsRemaining ? "is-spent" : ""}`} />)}</div>
@@ -439,13 +445,13 @@ export function App() {
         {feedback && <div className="feedback-toast" role="status" aria-live="polite">{feedback}</div>}
 
         {!state.solved && !state.revealed && !failureOpen && (
-          <footer className="minimal-control-rail">
-            <button className="icon-action" type="button" aria-label="Undo" disabled={history.current.length === 0} onClick={undo}>↶</button>
-            <PhasePalette phases={puzzle.diagramLabels} activePhaseId={state.activePhaseId} onSelect={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))} onPointerStart={() => undefined} />
-            <button className="clear-all-action" type="button" aria-label="Clear all labels" disabled={!state.cells.some((cell) => cell.phaseOrder.length > 0)} onClick={() => { commit(clearPhaseLabels); announce("All labels cleared"); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 11h10M9 15h6"/><path d="M5 19 19 5"/></svg></button>
-            <button className={`erase-action ${state.activeTool === "erase" ? "is-active" : ""}`} type="button" aria-label="Erase labels" aria-pressed={state.activeTool === "erase"} onClick={() => updateTransient((current) => setTool(current, current.activeTool === "erase" ? "label" : "erase"))}>⌫</button>
-            <button className="submit-action" type="button" aria-label="Submit labels" onClick={handleSubmit}>✓</button>
-          </footer>
+          <>
+            <footer className="minimal-control-rail">
+              <button className="icon-action" type="button" aria-label="Undo" disabled={history.current.length === 0} onClick={undo}>↶</button>
+              <PhasePalette phases={puzzle.diagramLabels} activePhaseId={state.activePhaseId} onSelect={(activePhaseId) => updateTransient((current) => ({ ...setTool(current, "label"), activePhaseId }))} onPointerStart={() => undefined} />
+            </footer>
+            <button className="submit-action submit-corner-action" type="button" aria-label="Submit labels" onClick={handleSubmit}>✓</button>
+          </>
         )}
         {(state.revealed || (state.solved && studyingResult)) && <footer className="review-control-rail" aria-label="Solution controls"><span>{state.revealed ? "Solution shown" : "Diagram solved"}</span><button type="button" onClick={goHome}>Menu</button><button type="button" onClick={newPuzzle}>Next</button></footer>}
       </>}
