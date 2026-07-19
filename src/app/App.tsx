@@ -166,6 +166,47 @@ function DifficultyStatistics({ difficulty, history }: { difficulty: typeof DIFF
   </section>;
 }
 
+function ElapsedClock({ state }: { state: ConstructionState }) {
+  const [clock, setClock] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const elapsed = formatElapsed(activeMilliseconds(state, clock));
+  return <time aria-label={`Elapsed time ${elapsed}`}>{elapsed}</time>;
+}
+
+function useDeferredConstructionPersistence(state: ConstructionState, difficulty: Difficulty) {
+  const latest = useRef({ state, difficulty });
+  latest.current = { state, difficulty };
+
+  useEffect(() => {
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    let idleId: number | undefined;
+    const timer = window.setTimeout(() => {
+      const persist = () => saveConstruction(state, difficulty);
+      idleId = idleWindow.requestIdleCallback?.(persist, { timeout: 1000 });
+      if (idleId === undefined) persist();
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (idleId !== undefined) idleWindow.cancelIdleCallback?.(idleId);
+    };
+  }, [difficulty, state]);
+
+  useEffect(() => {
+    const flush = () => saveConstruction(latest.current.state, latest.current.difficulty);
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, []);
+}
+
 export function App() {
   const [profile, setProfile] = useState<PlayerProfile>(loadProfile);
   const [difficulty, setDifficulty] = useState<Difficulty>(() => loadProfile().lastDifficulty);
@@ -175,7 +216,6 @@ export function App() {
   const [panel, setPanel] = useState<Panel>();
   const [feedback, setFeedback] = useState<string>();
   const [submitImpact, setSubmitImpact] = useState<{ id: number; kind: "wrong" | "solved" }>();
-  const [clock, setClock] = useState(Date.now());
   const [selectedConceptId, setSelectedConceptId] = useState<string>();
   const [studyingResult, setStudyingResult] = useState(false);
   const history = useRef<ConstructionState[]>([]);
@@ -188,12 +228,7 @@ export function App() {
     ? true
     : hasResumableConstruction(difficulty);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => saveConstruction(state, round.difficulty), [round.difficulty, state]);
+  useDeferredConstructionPersistence(state, round.difficulty);
   useEffect(() => saveProfile(profile), [profile]);
 
   useEffect(() => {
@@ -362,7 +397,7 @@ export function App() {
     announce("Continuing unscored");
   };
 
-  const elapsed = formatElapsed(activeMilliseconds(state, clock));
+  const elapsed = formatElapsed(activeMilliseconds(state));
   const selectedConcept = RULE_CONCEPTS.find((concept) => concept.id === selectedConceptId);
   const setSettings = (settings: GameSettings) => updateProfile((current) => ({ ...current, settings }));
   const openPanel = (next: Panel) => {
@@ -372,18 +407,11 @@ export function App() {
 
   return (
     <main className={`game-shell ${state.solved || state.revealed ? "is-clean" : ""} ${state.solved ? "is-solved" : ""} ${difficulty === "hard" ? "is-large-binary" : ""} ${profile.settings.leftHanded ? "left-handed" : ""}`}>
-      {/* Paper-theme print filters, matching photographed ink figures: strokes
-          stay drafted-straight, but edges erode into the paper fibre and ink
-          density varies faintly along the line, like a book reproduction. */}
+      {/* The small reference schematics retain the photographed-ink treatment.
+          The interactive board uses unfiltered strokes so input never triggers
+          a full-surface SVG filter repaint. */}
       <svg aria-hidden="true" focusable="false" width="0" height="0" style={{ position: "absolute" }}>
         <defs>
-          <filter id="pen-ink-board" filterUnits="userSpaceOnUse" x="-60" y="-60" width="1120" height="1120">
-            <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" seed="4" result="fibre" />
-            <feDisplacementMap in="SourceGraphic" in2="fibre" scale="1.8" xChannelSelector="R" yChannelSelector="G" result="rough" />
-            <feTurbulence type="fractalNoise" baseFrequency="0.08" numOctaves="2" seed="9" result="density" />
-            <feColorMatrix in="density" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.2 0.2 0.2 0 0.72" result="inkmask" />
-            <feComposite in="rough" in2="inkmask" operator="in" />
-          </filter>
           <filter id="pen-ink-glyph" filterUnits="userSpaceOnUse" x="-10" y="-10" width="180" height="130">
             <feTurbulence type="fractalNoise" baseFrequency="1.3" numOctaves="2" seed="4" result="fibre" />
             <feDisplacementMap in="SourceGraphic" in2="fibre" scale="0.6" xChannelSelector="R" yChannelSelector="G" result="rough" />
@@ -423,7 +451,7 @@ export function App() {
             </>}
           </div>
           <div className="status-cluster" aria-label="Puzzle status">
-            <time aria-label={`Elapsed time ${elapsed}`}>{elapsed}</time>
+            <ElapsedClock state={state} />
             <div className="attempts" aria-label={`${state.metrics.submissionsRemaining} submissions remaining`}>{[0, 1, 2].map((index) => <span key={index} className={`${index < state.metrics.submissionsRemaining ? "is-available" : ""} ${state.metrics.submitCount > 0 && index === state.metrics.submissionsRemaining ? "is-spent" : ""}`} />)}</div>
           </div>
           <div className="viewport-actions" role="group" aria-label="View controls">

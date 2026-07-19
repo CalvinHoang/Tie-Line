@@ -31,6 +31,9 @@ interface PendingFieldTap {
 
 const MIN_VIEWPORT_SCALE = 1;
 const PAN_THRESHOLD_PX = 7;
+const WHEEL_COMMIT_DELAY_MS = 140;
+
+const viewportTransform = (viewport: ViewportState) => `translate(${viewport.translateX} ${viewport.translateY}) scale(${viewport.scale})`;
 
 export function maximumViewportScale(expectedFieldCount: number): number {
   return expectedFieldCount >= 16 ? 6 : 3;
@@ -101,6 +104,12 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   const editingDisabled = state.solved || state.revealed || props.interactionDisabled;
   const maxViewportScale = maximumViewportScale(puzzle.expectedFieldCount);
   const svgRef = useRef<SVGSVGElement>(null);
+  const inkPlateRef = useRef<SVGGElement>(null);
+  const committedViewportRef = useRef(state.viewport);
+  const viewportRef = useRef(state.viewport);
+  const viewportFrame = useRef<number | undefined>(undefined);
+  const wheelCommitTimer = useRef<number | undefined>(undefined);
+  const viewportGestureChanged = useRef(false);
   const [gesture, setGesture] = useState<Gesture>();
   const pointers = useRef(new Map<number, PointerPosition>());
   const pendingFieldTaps = useRef(new Map<number, PendingFieldTap>());
@@ -115,6 +124,42 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     removing: boolean;
   }>();
 
+  if (committedViewportRef.current !== state.viewport) {
+    committedViewportRef.current = state.viewport;
+    viewportRef.current = state.viewport;
+  }
+
+  const flushViewport = () => {
+    if (viewportFrame.current !== undefined) {
+      window.cancelAnimationFrame(viewportFrame.current);
+      viewportFrame.current = undefined;
+    }
+    inkPlateRef.current?.setAttribute("transform", viewportTransform(viewportRef.current));
+  };
+
+  const updateLiveViewport = (viewport: ViewportState) => {
+    viewportRef.current = viewport;
+    if (viewportFrame.current !== undefined) return;
+    viewportFrame.current = window.requestAnimationFrame(() => {
+      viewportFrame.current = undefined;
+      inkPlateRef.current?.setAttribute("transform", viewportTransform(viewportRef.current));
+    });
+  };
+
+  const commitLiveViewport = () => {
+    flushViewport();
+    const viewport = viewportRef.current;
+    const committed = committedViewportRef.current;
+    if (viewport.scale !== committed.scale
+      || viewport.translateX !== committed.translateX
+      || viewport.translateY !== committed.translateY) props.onViewportChange(viewport);
+  };
+
+  useEffect(() => () => {
+    if (viewportFrame.current !== undefined) window.cancelAnimationFrame(viewportFrame.current);
+    if (wheelCommitTimer.current !== undefined) window.clearTimeout(wheelCommitTimer.current);
+  }, []);
+
   useEffect(() => {
     if (!targetFeedback) return;
     const timer = window.setTimeout(() => setTargetFeedback((current) => current?.id === targetFeedback.id ? undefined : current), 360);
@@ -126,8 +171,8 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     const svgX = rect.width > 0 ? ((clientX - rect.left) / rect.width) * VIEWBOX.width : VIEWBOX.width / 2;
     const svgY = rect.height > 0 ? ((clientY - rect.top) / rect.height) * VIEWBOX.height : VIEWBOX.height / 2;
     return svgToLogical(
-      (svgX - state.viewport.translateX) / state.viewport.scale,
-      (svgY - state.viewport.translateY) / state.viewport.scale,
+      (svgX - viewportRef.current.translateX) / viewportRef.current.scale,
+      (svgY - viewportRef.current.translateY) / viewportRef.current.scale,
     );
   };
   // A small logical tolerance keeps frame-edge anchors easy to acquire despite
@@ -156,16 +201,17 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   const pointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.current.size === 1) viewportGestureChanged.current = false;
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
       const center = clientToSvg({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
       pinch.current = {
         distance: Math.hypot(a.x - b.x, a.y - b.y),
         world: {
-          x: (center.x - state.viewport.translateX) / state.viewport.scale,
-          y: (center.y - state.viewport.translateY) / state.viewport.scale,
+          x: (center.x - viewportRef.current.translateX) / viewportRef.current.scale,
+          y: (center.y - viewportRef.current.translateY) / viewportRef.current.scale,
         },
-        viewport: state.viewport,
+        viewport: viewportRef.current,
       };
       pendingFieldTaps.current.clear();
       pan.current = undefined;
@@ -177,7 +223,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       pan.current = {
         pointerId: event.pointerId,
         start: { x: event.clientX, y: event.clientY },
-        viewport: state.viewport,
+        viewport: viewportRef.current,
         moved: false,
       };
       return;
@@ -201,7 +247,8 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       const nextDistance = Math.hypot(a.x - b.x, a.y - b.y);
       const nextCenter = clientToSvg({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
       const scale = pinch.current.viewport.scale * (nextDistance / pinch.current.distance);
-      props.onViewportChange(constrainViewport({
+      viewportGestureChanged.current = true;
+      updateLiveViewport(constrainViewport({
         scale,
         translateX: nextCenter.x - pinch.current.world.x * scale,
         translateY: nextCenter.y - pinch.current.world.y * scale,
@@ -218,7 +265,8 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       }
       if (pan.current.moved) {
         const rect = svgRef.current!.getBoundingClientRect();
-        props.onViewportChange(constrainViewport({
+        viewportGestureChanged.current = true;
+        updateLiveViewport(constrainViewport({
           ...pan.current.viewport,
           translateX: pan.current.viewport.translateX + dx * VIEWBOX.width / Math.max(1, rect.width),
           translateY: pan.current.viewport.translateY + dy * VIEWBOX.height / Math.max(1, rect.height),
@@ -249,16 +297,22 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
       x: ((event.clientX - rect.left) / rect.width) * VIEWBOX.width,
       y: ((event.clientY - rect.top) / rect.height) * VIEWBOX.height,
     };
-    props.onViewportChange(zoomViewportAt(
-      state.viewport,
-      state.viewport.scale * Math.exp(-event.deltaY * .0015),
+    updateLiveViewport(zoomViewportAt(
+      viewportRef.current,
+      viewportRef.current.scale * Math.exp(-event.deltaY * .0015),
       cursor,
       maxViewportScale,
     ));
+    if (wheelCommitTimer.current !== undefined) window.clearTimeout(wheelCommitTimer.current);
+    wheelCommitTimer.current = window.setTimeout(() => {
+      wheelCommitTimer.current = undefined;
+      commitLiveViewport();
+    }, WHEEL_COMMIT_DELAY_MS);
   };
 
   const pointerUp = (event: React.PointerEvent<SVGSVGElement>) => {
     const completedPan = pan.current?.pointerId === event.pointerId ? pan.current : undefined;
+    const completedViewportGesture = viewportGestureChanged.current && Boolean(completedPan?.moved || pinch.current);
     const tap = pendingFieldTaps.current.get(event.pointerId);
     if (tap && completedPan && !completedPan.moved && pointers.current.size === 1 && !editingDisabled) {
       confirmTarget(tap.client, tap.targetId, tap.phaseId, tap.removing);
@@ -269,6 +323,10 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
     if (pointers.current.size < 2) pinch.current = undefined;
     if (completedPan) pan.current = undefined;
     if (pointers.current.size === 0) setIsPanning(false);
+    if (completedViewportGesture) {
+      commitLiveViewport();
+      viewportGestureChanged.current = false;
+    }
     if (!gesture) return;
     if (gesture.kind === "point") {
       props.onPlacePoint(gesture.roleId, gesture.preview);
@@ -338,6 +396,8 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
   const pointerCancel = (event: React.PointerEvent<SVGSVGElement>) => {
     pendingFieldTaps.current.delete(event.pointerId);
     pointers.current.delete(event.pointerId);
+    if (viewportGestureChanged.current) commitLiveViewport();
+    viewportGestureChanged.current = false;
     pan.current = undefined;
     pinch.current = undefined;
     setGesture(undefined);
@@ -421,14 +481,9 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
         <pattern id="unstable-spinodal-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)">
           <line x1="0" y1="0" x2="0" y2="8" />
         </pattern>
-        <filter id="paper-grain" x="-2%" y="-2%" width="104%" height="104%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="11" stitchTiles="stitch" />
-          <feColorMatrix type="matrix" values="0 0 0 0 0.36  0 0 0 0 0.30  0 0 0 0 0.20  0 0 0 0.32 0" />
-        </filter>
       </defs>
-      <g className="ink-plate" transform={`translate(${state.viewport.translateX} ${state.viewport.translateY}) scale(${state.viewport.scale})`}>
+      <g ref={inkPlateRef} className="ink-plate" transform={viewportTransform(viewportRef.current)}>
         <rect className="board-surface" x={FRAME.left} y={FRAME.top} width={FRAME.right - FRAME.left} height={FRAME.bottom - FRAME.top} />
-        <rect className="board-grain" aria-hidden="true" x={FRAME.left} y={FRAME.top} width={FRAME.right - FRAME.left} height={FRAME.bottom - FRAME.top} filter="url(#paper-grain)" />
         {state.activeTool === "point" && !state.solved && (
           <g className="placement-grid" aria-hidden="true">
             {Array.from({ length: 11 }, (_, index) => {
@@ -556,7 +611,7 @@ export function DiagramCanvas(props: DiagramCanvasProps) {
             y={label.y}
             phases={cell.phaseOrder}
             puzzle={puzzle}
-            scale={label.scale / state.viewport.scale}
+            scale={label.scale / viewportRef.current.scale}
             fitsField={label.fits}
             orientation={label.orientation}
             onRemove={state.activeTool === "erase"

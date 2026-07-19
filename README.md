@@ -16,11 +16,14 @@ npm run dev
 ```bash
 npm run typecheck
 npm test
+npm run test:performance
 npm run test:e2e
 npm run build
 ```
 
 The Playwright command requires its Chromium runtime (`npx playwright install chromium`).
+
+`test:performance` runs the complex Hard diagram through both the desktop and 320 px mobile projects in an isolated, single-worker configuration. It enforces a 70 ms 95th-percentile input-to-paint/update budget, verifies that a one-finger drag remains frame-driven, and injects an 80 ms construction-storage delay to catch synchronous persistence work leaking back into active inputs. Timing checks are intentionally kept out of the parallel functional suite so unrelated browser workers cannot distort their budgets.
 
 ## Game features
 

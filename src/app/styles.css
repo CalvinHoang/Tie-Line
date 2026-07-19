@@ -121,7 +121,7 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .attempts span.is-available { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px rgb(86 212 210 / 28%); }
 .attempts span.is-spent { animation: attempt-spent 420ms var(--spring) both; }
 
-.board-region { min-height: 0; position: relative; padding: 0 7px 84px; }
+.board-region { min-height: 0; position: relative; padding: 0 7px 84px; contain: layout paint; }
 .diagram-canvas {
   display: block;
   width: 100%;
@@ -158,7 +158,6 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 .failure-choice-grid button, .completion-choice-grid button { min-height: 48px; border: 1px solid var(--hairline); border-radius: 13px; color: var(--ink); background: transparent; cursor: pointer; font-weight: 680; }
 .failure-choice-grid button:first-child, .completion-choice-grid button:first-child { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); }
 .board-surface { fill: var(--surface); }
-.board-grain { opacity: 0; pointer-events: none; }
 .board-frame { fill: none; stroke: #596068; stroke-width: 1.6; stroke-linecap: square; vector-effect: non-scaling-stroke; pointer-events: none; }
 .axis-label { font-size: 26px; font-weight: 650; fill: #aeb5bb; }
 .placement-grid line { stroke: #2c3238; stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -675,8 +674,6 @@ button { color: inherit; -webkit-tap-highlight-color: transparent; }
 :root[data-theme="light"] .home-title { font-family: "Courier Prime", "Courier New", monospace; font-weight: 700; letter-spacing: .22em; }
 :root[data-theme="light"] .eyebrow { letter-spacing: .2em; }
 :root[data-theme="light"] .board-frame { stroke: #5b4f3b; }
-:root[data-theme="light"] .board-grain { opacity: .5; }
-:root[data-theme="light"] .diagram-canvas > .ink-plate { filter: url(#pen-ink-board); }
 :root[data-theme="light"] .concept-diagram > .ink { filter: url(#pen-ink-glyph); }
 :root[data-theme="light"] .foundation-card svg > .ink { filter: url(#pen-ink-glyph); }
 :root[data-theme="light"] .geometry-line { stroke: #2b2318; stroke-width: 2; }
